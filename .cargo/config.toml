@@ -1,3 +1,25 @@
 [target.x86_64-pc-windows-gnu]
 linker = "/usr/bin/x86_64-w64-mingw32-gcc"
 ar = "/usr/bin/x86_64-w64-mingw32-ar"
+rustflags = [
+    "-Zshare-generics=y", # This needs to be off if you use dynamic linking on Windows.
+    "-Zthreads=0",
+]
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = [
+    "-C",
+    "link-arg=-fuse-ld=/usr/bin/mold",
+    "-Zshare-generics=y",
+    "-Zthreads=0",
+]
+
+[unstable]
+codegen-backend = true
+
+[profile.dev]
+codegen-backend = "cranelift"
+
+[profile.dev.package."*"]
+codegen-backend = "llvm"

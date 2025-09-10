@@ -26,7 +26,6 @@ fn main() {
         .add_plugins((
             DefaultPlugins,
             RapierPhysicsPlugin::<()>::default(),
-            RapierDebugRenderPlugin::default(),
             bevy_panic_handler::PanicHandler::new().build(),
             PlayerPlugin,
             TrenchBroomPlugins(
@@ -61,22 +60,12 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
-    //mut meshes: ResMut<Assets<Mesh>>,
-    //mut materials: ResMut<Assets<StandardMaterial>>,
     mut framepace_setting: ResMut<FramepaceSettings>,
     asset_server: Res<AssetServer>,
 ) {
     framepace_setting.limiter = Limiter::Auto;
 
-    //let material = materials.add(Color::WHITE);
-    //let material_2 = materials.add(Color::srgb(1.0, 0.0, 0.0));
-
     commands.spawn(SceneRoot(asset_server.load("maps/test.bsp#Scene")));
-
-    commands.spawn((
-        Collider::cuboid(10.0, 1.0, 10.0),
-        Transform::from_xyz(0.0, -0.5, 0.0),
-    ));
 
     commands.spawn((
         PlayerController,
