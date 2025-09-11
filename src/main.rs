@@ -1,5 +1,6 @@
 use bevy::{
     prelude::*,
+    scene::SceneInstanceReady,
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
@@ -8,15 +9,21 @@ use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::{
     TrenchBroomPlugins,
     config::TrenchBroomConfig,
-    prelude::{ComputeLightmapSettings, SpawnHooks},
+    geometry::MapGeometry,
+    physics::SceneCollidersReady,
+    prelude::{ComputeLightmapSettings, GenericMaterial3d, SpawnHooks},
 };
 use nil::ShortToString;
 
-use crate::player::{
-    CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerController, PlayerPlugin,
+use crate::{
+    player::{
+        CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerController, PlayerPlugin,
+    },
+    special_textures::{SkyMaterial, SpecialTexturesPlugin},
 };
 
 mod player;
+mod special_textures;
 
 fn main() {
     App::new()
@@ -25,6 +32,7 @@ fn main() {
         //.insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins((
             DefaultPlugins,
+            SpecialTexturesPlugin,
             RapierPhysicsPlugin::<()>::default(),
             bevy_panic_handler::PanicHandler::new().build(),
             PlayerPlugin,
@@ -55,6 +63,7 @@ fn main() {
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, grab_cursor)
+        .add_observer(replace_materials)
         .run();
 }
 
@@ -72,6 +81,29 @@ fn setup(
         ControllerAimAcceleration::default(),
         JumpSettings::default(),
     ));
+}
+
+fn replace_materials(
+    _trigger: Trigger<SceneCollidersReady>,
+    mut commands: Commands,
+    mut materials: ResMut<Assets<SkyMaterial>>,
+    sky_query: Query<(Entity, &Name), With<MapGeometry>>,
+    asset_server: Res<AssetServer>,
+) {
+    let sky_material = MeshMaterial3d(materials.add(SkyMaterial {
+        texture: asset_server.load("textures/skybox/sky_cloudy018_hdr.exr"),
+        ..default()
+    }));
+
+    sky_query
+        .iter()
+        .filter_map(|(entity, name)| name.starts_with("sky").then(|| entity))
+        .for_each(|entity| {
+            commands
+                .entity(entity)
+                .remove::<GenericMaterial3d>()
+                .insert(sky_material.clone());
+        });
 }
 
 fn grab_cursor(
