@@ -185,16 +185,16 @@ struct PlayerVelocity(Vec3);
 pub struct PlayerController;
 
 #[derive(Component)]
-struct WorldModelCameraMarker;
+struct WorldCameraMarker;
 
 fn spawn_player(
     _trigger: Trigger<SceneInstanceReady>,
-    player_entity_query: Single<(Entity, &mut Transform), With<PlayerController>>,
+    mut player_entity_query: Query<(Entity, &mut Transform), With<PlayerController>>,
     player_start_query: Populated<&Transform, (With<InfoPlayerStart>, Without<PlayerController>)>,
     fov: Res<FOV>,
     mut commands: Commands,
-) {
-    let (entity, mut player_transform) = player_entity_query.into_inner();
+) -> Result {
+    let (entity, mut player_transform) = player_entity_query.single_mut()?;
 
     let transforms: Vec<&Transform> = player_start_query.iter().collect();
     if let Some(player_start_transform) = transforms.get(0) {
@@ -203,7 +203,7 @@ fn spawn_player(
 
     commands.entity(entity).with_children(|parent| {
         parent.spawn((
-            WorldModelCameraMarker,
+            WorldCameraMarker,
             Camera3d::default(),
             Projection::from(PerspectiveProjection {
                 fov: fov.into_inner().into(),
@@ -212,6 +212,8 @@ fn spawn_player(
             Transform::from_xyz(0.0, 1.79, 0.0),
         ));
     });
+
+    Ok(())
 }
 
 fn keyboard_input(
@@ -268,7 +270,7 @@ fn mouse_input(
 
 fn look(
     player_query: Single<&mut Transform, (With<PlayerController>, Without<ChildOf>)>,
-    camera_query: Single<&mut Transform, (With<Camera3d>, With<ChildOf>)>,
+    camera_query: Single<&mut Transform, (With<Camera3d>, With<ChildOf>, With<WorldCameraMarker>)>,
     mut movement_event_reader: EventReader<MovementAction>,
 ) {
     let mut player_transform = player_query.into_inner();
@@ -294,7 +296,7 @@ fn look(
 fn movement(
     time: Res<Time>,
     mut movement_event_reader: EventReader<MovementAction>,
-    query: Single<
+    mut query: Query<
         (
             &Transform,
             &mut PlayerVelocity,
@@ -306,7 +308,7 @@ fn movement(
         ),
         With<PlayerController>,
     >,
-) {
+) -> Result {
     let delta_time = time.delta_secs();
     let (
         transform,
@@ -316,7 +318,7 @@ fn movement(
         jump_settings,
         movement_settings,
         gravity_scale,
-    ) = query.into_inner();
+    ) = query.single_mut()?;
 
     let vertical_velocity = &mut velocity.0.y;
     let is_grounded = output.map_or(false, |o| o.grounded && *vertical_velocity <= 0.0);
@@ -398,6 +400,8 @@ fn movement(
     }
 
     controller.translation = Some(velocity.0 * delta_time);
+
+    Ok(())
 }
 
 fn headbob_effect(

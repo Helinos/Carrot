@@ -1,6 +1,5 @@
 use bevy::{
     prelude::*,
-    scene::SceneInstanceReady,
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
@@ -16,18 +15,20 @@ use bevy_trenchbroom::{
 use nil::ShortToString;
 
 use crate::{
+    materials::{SkyMaterial, SpecialTexturesPlugin},
     player::{
         CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerController, PlayerPlugin,
     },
-    special_textures::{SkyMaterial, SpecialTexturesPlugin},
+    portal::PortalPlugin,
 };
 
+mod materials;
 mod player;
-mod special_textures;
+mod portal;
 
 fn main() {
     App::new()
-        .insert_resource(ClearColor(Color::BLACK))
+        .insert_resource(ClearColor(Color::srgb(1.0, 0.0, 1.0)))
         .insert_resource(AmbientLight::NONE)
         //.insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins((
@@ -60,10 +61,10 @@ fn main() {
             EguiPlugin::default(),
             WorldInspectorPlugin::new(),
             FramepacePlugin,
+            PortalPlugin,
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, grab_cursor)
-        .add_observer(replace_materials)
         .run();
 }
 
@@ -81,29 +82,6 @@ fn setup(
         ControllerAimAcceleration::default(),
         JumpSettings::default(),
     ));
-}
-
-fn replace_materials(
-    _trigger: Trigger<SceneCollidersReady>,
-    mut commands: Commands,
-    mut materials: ResMut<Assets<SkyMaterial>>,
-    sky_query: Query<(Entity, &Name), With<MapGeometry>>,
-    asset_server: Res<AssetServer>,
-) {
-    let sky_material = MeshMaterial3d(materials.add(SkyMaterial {
-        texture: asset_server.load("textures/skybox/sky_cloudy018_hdr.exr"),
-        ..default()
-    }));
-
-    sky_query
-        .iter()
-        .filter_map(|(entity, name)| name.starts_with("sky").then(|| entity))
-        .for_each(|entity| {
-            commands
-                .entity(entity)
-                .remove::<GenericMaterial3d>()
-                .insert(sky_material.clone());
-        });
 }
 
 fn grab_cursor(

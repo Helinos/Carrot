@@ -1,2 +1,6 @@
 /target
-/assets
+/assets/textures
+/assets/wads
+/assets/palette.lmp
+/assets/maps/*.prt
+/assets/maps/autosave
