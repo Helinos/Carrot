@@ -66,13 +66,13 @@ nest! {
     #[derive(Component)]
     pub struct CameraSettings {
         pub allow_movement: bool,
-
         #>[derive(Clone, Copy)]
         pub mouse_sensitivity: pub enum CameraSensitivity {
             Linear(f32),
             Relative(Vec2),
         },
         pub controller_sensitivity: CameraSensitivity,
+        pub distance_from_ground: f32,
     }
 }
 
@@ -153,6 +153,7 @@ struct PlayerVelocity(Vec3);
         allow_movement: false,
         mouse_sensitivity: CameraSensitivity::Linear(0.003),
         controller_sensitivity: CameraSensitivity::Linear(0.005),
+        distance_from_ground: 1.79,
     },
     MovementSettings {
         walking_speed: 7.0,
@@ -182,19 +183,25 @@ struct PlayerVelocity(Vec3);
     GravityScale(1.5),
 )]
 
-pub struct PlayerController;
+pub struct PlayerControllerMarker;
 
 #[derive(Component)]
-struct WorldCameraMarker;
+pub struct WorldCameraMarker;
 
 fn spawn_player(
     _trigger: Trigger<SceneInstanceReady>,
-    mut player_entity_query: Query<(Entity, &mut Transform), With<PlayerController>>,
-    player_start_query: Populated<&Transform, (With<InfoPlayerStart>, Without<PlayerController>)>,
+    mut player_entity_query: Query<
+        (Entity, &mut Transform, &CameraSettings),
+        With<PlayerControllerMarker>,
+    >,
+    player_start_query: Populated<
+        &Transform,
+        (With<InfoPlayerStart>, Without<PlayerControllerMarker>),
+    >,
     fov: Res<FOV>,
     mut commands: Commands,
 ) -> Result {
-    let (entity, mut player_transform) = player_entity_query.single_mut()?;
+    let (entity, mut player_transform, camera_settings) = player_entity_query.single_mut()?;
 
     let transforms: Vec<&Transform> = player_start_query.iter().collect();
     if let Some(player_start_transform) = transforms.get(0) {
@@ -209,7 +216,7 @@ fn spawn_player(
                 fov: fov.into_inner().into(),
                 ..default()
             }),
-            Transform::from_xyz(0.0, 1.79, 0.0),
+            Transform::from_xyz(0.0, camera_settings.distance_from_ground, 0.0),
         ));
     });
 
@@ -217,7 +224,10 @@ fn spawn_player(
 }
 
 fn keyboard_input(
-    player_settings: Single<(Option<&JumpSettings>, &MovementSettings), With<PlayerController>>,
+    player_settings: Single<
+        (Option<&JumpSettings>, &MovementSettings),
+        With<PlayerControllerMarker>,
+    >,
     mut movement_event_writer: EventWriter<MovementAction>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
@@ -269,7 +279,7 @@ fn mouse_input(
 }
 
 fn look(
-    player_query: Single<&mut Transform, (With<PlayerController>, Without<ChildOf>)>,
+    player_query: Single<&mut Transform, (With<PlayerControllerMarker>, Without<ChildOf>)>,
     camera_query: Single<&mut Transform, (With<Camera3d>, With<ChildOf>, With<WorldCameraMarker>)>,
     mut movement_event_reader: EventReader<MovementAction>,
 ) {
@@ -306,7 +316,7 @@ fn movement(
             &MovementSettings,
             &GravityScale,
         ),
-        With<PlayerController>,
+        With<PlayerControllerMarker>,
     >,
 ) -> Result {
     let delta_time = time.delta_secs();
@@ -406,7 +416,7 @@ fn movement(
 
 fn headbob_effect(
     time: Res<Time>,
-    headbob_settings: Option<Single<&HeadbobSettings, With<PlayerController>>>,
+    headbob_settings: Option<Single<&HeadbobSettings, With<PlayerControllerMarker>>>,
 ) {
     if let Some(headbob_settings) = headbob_settings.map(|hs| hs.into_inner()) {}
 }

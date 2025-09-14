@@ -1,12 +1,9 @@
 use bevy::{asset::embedded_asset, prelude::*, render::render_resource::AsBindGroup};
-use bevy_trenchbroom::{
-    geometry::MapGeometry, physics::SceneCollidersReady, prelude::GenericMaterial3d,
-};
-use nil::prelude::SmartDefault;
+use bevy_trenchbroom::{geometry::MapGeometry, prelude::GenericMaterial3d};
 
-pub struct SpecialTexturesPlugin;
+pub struct SpecialMaterialsPlugin;
 
-impl Plugin for SpecialTexturesPlugin {
+impl Plugin for SpecialMaterialsPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/sky.wgsl");
         embedded_asset!(app, "shaders/portal.wgsl");
@@ -15,34 +12,43 @@ impl Plugin for SpecialTexturesPlugin {
             MaterialPlugin::<SkyMaterial>::default(),
             MaterialPlugin::<PortalMaterial>::default(),
         ))
-        .add_observer(replace_materials);
+        .add_systems(PostUpdate, setup_new_brushes);
     }
 }
 
-fn replace_materials(
-    _trigger: Trigger<SceneCollidersReady>,
+#[derive(Component)]
+pub struct MaterialSetupFinishedMarker;
+
+fn setup_new_brushes(
     mut commands: Commands,
     mut materials: ResMut<Assets<SkyMaterial>>,
-    map_geometry_query: Query<(Entity, &Name), With<MapGeometry>>,
+    new_brushes: Populated<
+        (Entity, &Name),
+        (With<MapGeometry>, Without<MaterialSetupFinishedMarker>),
+    >,
     asset_server: Res<AssetServer>,
 ) {
+    // TODO: Not this
     let sky_material = MeshMaterial3d(materials.add(SkyMaterial {
         texture: asset_server.load("textures/skybox/sky_cloudy018_hdr.exr"),
         ..default()
     }));
 
-    map_geometry_query
-        .iter()
-        .filter_map(|(entity, name)| name.starts_with("sky").then(|| entity))
-        .for_each(|entity| {
+    for (brush_entity, brush_name) in new_brushes.iter() {
+        if brush_name.starts_with("sky") {
             commands
-                .entity(entity)
+                .entity(brush_entity)
                 .remove::<GenericMaterial3d>()
                 .insert(sky_material.clone());
-        });
+        }
+
+        commands
+            .entity(brush_entity)
+            .insert(MaterialSetupFinishedMarker);
+    }
 }
 
-#[derive(Asset, AsBindGroup, Reflect, Clone, SmartDefault)]
+#[derive(Asset, AsBindGroup, Reflect, Clone, Default)]
 pub struct SkyMaterial {
     #[texture(1)]
     #[sampler(2)]
@@ -59,11 +65,11 @@ impl Material for SkyMaterial {
     }
 }
 
-#[derive(Asset, AsBindGroup, Reflect, Clone, SmartDefault)]
+#[derive(Asset, AsBindGroup, Reflect, Clone, Default)]
 pub struct PortalMaterial {
     #[texture(1)]
     #[sampler(2)]
-    pub texture: Handle<Image>,
+    pub texture_handle: Handle<Image>,
 }
 
 impl Material for PortalMaterial {

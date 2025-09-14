@@ -8,23 +8,22 @@ use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::{
     TrenchBroomPlugins,
     config::TrenchBroomConfig,
-    geometry::MapGeometry,
-    physics::SceneCollidersReady,
-    prelude::{ComputeLightmapSettings, GenericMaterial3d, SpawnHooks},
+    prelude::{ComputeLightmapSettings, SpawnHooks},
 };
 use nil::ShortToString;
 
 use crate::{
-    materials::{SkyMaterial, SpecialTexturesPlugin},
     player::{
-        CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerController, PlayerPlugin,
+        CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerControllerMarker,
+        PlayerPlugin,
     },
     portal::PortalPlugin,
+    special_materials::SpecialMaterialsPlugin,
 };
 
-mod materials;
 mod player;
 mod portal;
+mod special_materials;
 
 fn main() {
     App::new()
@@ -33,7 +32,7 @@ fn main() {
         //.insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins((
             DefaultPlugins,
-            SpecialTexturesPlugin,
+            SpecialMaterialsPlugin,
             RapierPhysicsPlugin::<()>::default(),
             bevy_panic_handler::PanicHandler::new().build(),
             PlayerPlugin,
@@ -78,7 +77,7 @@ fn setup(
     commands.spawn(SceneRoot(asset_server.load("maps/test.bsp#Scene")));
 
     commands.spawn((
-        PlayerController,
+        PlayerControllerMarker,
         ControllerAimAcceleration::default(),
         JumpSettings::default(),
     ));
