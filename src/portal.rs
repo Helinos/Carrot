@@ -4,6 +4,7 @@ use bevy::{
     render::{
         primitives::Aabb,
         render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
+        view::RenderLayers,
     },
     window::PrimaryWindow,
 };
@@ -16,6 +17,7 @@ use bevy_trenchbroom::{
 use nil::prelude::SmartDefault;
 
 use crate::{
+    DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
     player::{FOV, WorldCameraMarker},
     special_materials::PortalMaterial,
 };
@@ -138,7 +140,8 @@ fn link_portals(
     };
 
     let mut link = |source_portal: &mut (Entity, Mut<'_, WorldPortal>, &Aabb),
-                    dest_portal: &(Entity, Mut<'_, WorldPortal>, &Aabb)| {
+                    dest_portal: &(Entity, Mut<'_, WorldPortal>, &Aabb),
+                    portal_render_layer: usize| {
         let (source_portal_ent, source_portal, source_portal_aabb) = source_portal;
         let (dest_portal_ent, dest_portal, dest_portal_aabb) = dest_portal;
 
@@ -185,7 +188,10 @@ fn link_portals(
         commands
             .entity(*source_portal_ent)
             .remove::<GenericMaterial3d>()
-            .insert(MeshMaterial3d(portal_material_handle));
+            .insert((
+                MeshMaterial3d(portal_material_handle),
+                RenderLayers::layer(portal_render_layer),
+            ));
     };
 
     let mut combinations = portals.iter_combinations_mut();
@@ -195,8 +201,8 @@ fn link_portals(
             continue;
         }
 
-        link(&mut portal_1, &portal_2);
-        link(&mut portal_2, &portal_1);
+        link(&mut portal_1, &portal_2, PORTAL_RENDER_LAYER_1);
+        link(&mut portal_2, &portal_1, PORTAL_RENDER_LAYER_2);
     }
 
     Ok(())

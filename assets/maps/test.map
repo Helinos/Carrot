@@ -337,7 +337,7 @@
 "classname" "func_world_portal"
 "destination_id" "1"
 "id" "2"
-"facing" "180 0 0"
+"facing" "0 0 0"
 // brush 0
 {
 ( -64 80 128 ) ( -64 64 128 ) ( -64 64 0 ) 128_blood_1 [ -1.8369701987210297e-16 -1 0 0 ] [ 0 0 -1 0 ] 180 1 1
@@ -353,7 +353,7 @@
 "classname" "func_world_portal"
 "id" "1"
 "destination_id" "2"
-"facing" "90 0 0"
+"facing" "-90 0 0"
 // brush 0
 {
 ( -464 -320 128 ) ( -464 -448 128 ) ( -464 -448 0 ) void [ 0 -1 0 0 ] [ 0 0 -1 0 ] 0 1 1

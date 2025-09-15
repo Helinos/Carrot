@@ -1,9 +1,14 @@
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*, scene::SceneInstanceReady};
+use bevy::{
+    input::mouse::AccumulatedMouseMotion, prelude::*, render::view::RenderLayers,
+    scene::SceneInstanceReady,
+};
 use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::class::builtin::InfoPlayerStart;
 use nestify::nest;
+
+use crate::{DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2};
 
 pub struct PlayerPlugin;
 
@@ -217,6 +222,11 @@ fn spawn_player(
                 ..default()
             }),
             Transform::from_xyz(0.0, camera_settings.distance_from_ground, 0.0),
+            RenderLayers::from_layers(&[
+                DEFAULT_RENDER_LAYER,
+                PORTAL_RENDER_LAYER_1,
+                PORTAL_RENDER_LAYER_2,
+            ]),
         ));
     });
 

@@ -67,6 +67,11 @@ fn main() {
         .run();
 }
 
+const DEFAULT_RENDER_LAYER: usize = 0;
+const VIEW_MODEL_RENDER_LAYER: usize = 1;
+const PORTAL_RENDER_LAYER_1: usize = 2;
+const PORTAL_RENDER_LAYER_2: usize = 3;
+
 fn setup(
     mut commands: Commands,
     mut framepace_setting: ResMut<FramepaceSettings>,
