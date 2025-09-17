@@ -8,7 +8,9 @@ use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::class::builtin::InfoPlayerStart;
 use nestify::nest;
 
-use crate::{DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2};
+use crate::{
+    DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2, portal::PortalCameraChildOf,
+};
 
 pub struct PlayerPlugin;
 
@@ -198,11 +200,6 @@ pub struct WorldCameraMarker;
 #[derive(Component)]
 pub struct PlayerSpawnedMarker;
 
-/// Marker for a child entity that should contain only the transform for modifying the player's rotation differently than the things that are children of the player.
-/// The entity with the WorldCameraMarker should be a child of this entity.
-#[derive(Component)]
-pub struct PlayerRotationMarker;
-
 fn spawn_player(
     player: Single<
         (Entity, &mut Transform, &CameraSettings),
@@ -219,40 +216,30 @@ fn spawn_player(
         return Ok(());
     };
 
-    println!("{:?}", player_start_transform);
-
-    player_transform.translation = player_start_transform.translation;
-
-    println!("{:?}", player_transform);
-
-    let rotation = Transform::from_rotation(player_start_transform.rotation);
+    *player_transform = **player_start_transform;
 
     commands
         .entity(entity)
         .insert(PlayerSpawnedMarker)
-        .with_children(|parent| {
-            let mut player_rotation = parent.spawn((PlayerRotationMarker, rotation));
-
-            player_rotation.with_child((
-                WorldCameraMarker,
-                Camera3d::default(),
-                Projection::from(PerspectiveProjection {
-                    fov: fov.into_inner().into(),
-                    ..default()
-                }),
-                Transform::from_xyz(0.0, camera_settings.height, 0.0),
-                RenderLayers::from_layers(&[
-                    DEFAULT_RENDER_LAYER,
-                    PORTAL_RENDER_LAYER_1,
-                    PORTAL_RENDER_LAYER_2,
-                ]),
-            ));
-        });
+        .with_child((
+            WorldCameraMarker,
+            Camera3d::default(),
+            Projection::from(PerspectiveProjection {
+                fov: fov.into_inner().into(),
+                ..default()
+            }),
+            Transform::from_xyz(0.0, camera_settings.height, 0.0),
+            RenderLayers::from_layers(&[
+                DEFAULT_RENDER_LAYER,
+                PORTAL_RENDER_LAYER_1,
+                PORTAL_RENDER_LAYER_2,
+            ]),
+        ));
 
     Ok(())
 }
 
-fn keyboard_input(
+pub fn keyboard_input(
     player_settings: Single<
         (Option<&JumpSettings>, &MovementSettings),
         With<PlayerControllerMarker>,
@@ -293,7 +280,7 @@ fn keyboard_input(
     }
 }
 
-fn mouse_input(
+pub fn mouse_input(
     camera_settings: Single<&CameraSettings>,
     accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
     mut movement_event_writer: EventWriter<MovementAction>,
@@ -307,16 +294,17 @@ fn mouse_input(
     }
 }
 
-fn look(
-    player_rotation: Single<
-        &mut Transform,
-        (With<PlayerRotationMarker>, Without<WorldCameraMarker>),
-    >,
-    camera: Single<&mut Transform, (With<Camera3d>, With<WorldCameraMarker>)>,
+pub fn look(
+    player: Single<&mut Transform, (With<PlayerControllerMarker>, Without<WorldCameraMarker>)>,
+    player_camera: Single<&mut Transform, (With<Camera3d>, With<WorldCameraMarker>)>,
     mut movement_event_reader: EventReader<MovementAction>,
+    mut portal_cameras: Populated<
+        (Entity, &mut Transform),
+        (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
+    >,
 ) {
-    let mut player_yaw_transform = player_rotation.into_inner();
-    let mut camera_transform = camera.into_inner();
+    let mut player_transform = player.into_inner();
+    let mut camera_transform = player_camera.into_inner();
 
     for event in movement_event_reader.read() {
         match event {
@@ -327,7 +315,7 @@ fn look(
                 let clamped_delta =
                     (camera_pitch + delta.y).clamp(-PITCH_LIMIT, PITCH_LIMIT) - camera_pitch;
 
-                player_yaw_transform.rotate_local_y(delta.x);
+                player_transform.rotate_local_y(delta.x);
                 camera_transform.rotate_local_x(clamped_delta);
             }
             _ => (),
@@ -335,11 +323,13 @@ fn look(
     }
 }
 
+// TODO: Split ground/air movement back into two separate systems.
 pub fn movement(
     time: Res<Time>,
     mut movement_event_reader: EventReader<MovementAction>,
     player: Single<
         (
+            &Transform,
             &mut PlayerVelocity,
             &mut KinematicCharacterController,
             Option<&KinematicCharacterControllerOutput>,
@@ -349,14 +339,18 @@ pub fn movement(
         ),
         With<PlayerControllerMarker>,
     >,
-    player_rotation: Single<&Transform, With<PlayerRotationMarker>>,
 ) -> Result {
     let delta_time = time.delta_secs();
 
-    let (mut velocity, mut controller, output, jump_settings, movement_settings, gravity_scale) =
-        player.into_inner();
-
-    let player_rot_transform = player_rotation.into_inner();
+    let (
+        transform,
+        mut velocity,
+        mut controller,
+        output,
+        jump_settings,
+        movement_settings,
+        gravity_scale,
+    ) = player.into_inner();
 
     let velocity = &mut velocity.0;
     let is_grounded = output.map_or(false, |o| o.grounded && velocity.y <= 0.0);
@@ -371,7 +365,7 @@ pub fn movement(
                     input_direction,
                     movement_speed,
                 } => {
-                    let wish_direction = player_rot_transform
+                    let wish_direction = transform
                         .rotation
                         .mul_vec3(input_direction.extend(0.0).xzy());
                     let current_speed_in_wish_direction = velocity.dot(wish_direction);
@@ -415,7 +409,7 @@ pub fn movement(
                     input_direction,
                     movement_speed: _,
                 } => {
-                    let wish_direction = player_rot_transform
+                    let wish_direction = transform
                         .rotation
                         .mul_vec3(input_direction.extend(0.0).xzy());
                     let current_speed_in_wish_direction = velocity.dot(wish_direction);
@@ -442,7 +436,7 @@ pub fn movement(
     Ok(())
 }
 
-fn headbob_effect(
+pub fn headbob_effect(
     time: Res<Time>,
     headbob_settings: Option<Single<&HeadbobSettings, With<PlayerControllerMarker>>>,
 ) {

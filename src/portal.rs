@@ -8,7 +8,6 @@ use bevy::{
     },
     window::PrimaryWindow,
 };
-use bevy_rapier3d::plugin::RapierTransformPropagateSet;
 use bevy_trenchbroom::{
     anyhow::{self, anyhow},
     class::QuakeClassSpawnView,
@@ -18,7 +17,7 @@ use nil::prelude::SmartDefault;
 
 use crate::{
     PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
-    player::{CameraSettings, FOV, PlayerControllerMarker, WorldCameraMarker},
+    player::{FOV, WorldCameraMarker, look, movement},
     special_materials::PortalMaterial,
 };
 
@@ -29,13 +28,14 @@ impl Plugin for PortalPlugin {
         app.register_type::<WorldPortalClass>()
             .register_type::<WorldPortal>()
             .add_systems(PreUpdate, update_visibility)
+            .add_systems(Update, update_camera_positions.after(look).before(movement))
             .add_systems(
                 PostUpdate,
                 (
                     link_portals,
-                    // update_camera_positions
-                    //     .after(RapierTransformPropagateSet)
-                    //     .before(TransformSystem::TransformPropagate),
+                    //update_camera_positions
+                    //    .after(RapierTransformPropagateSet)
+                    //    .before(TransformSystem::TransformPropagate),
                 ),
             );
     }
@@ -43,23 +43,23 @@ impl Plugin for PortalPlugin {
 
 #[derive(Component)]
 #[relationship(relationship_target = PortalCameraChildren)]
-struct PortalCameraChildOf(pub Entity);
+pub struct PortalCameraChildOf(pub Entity);
 
 #[derive(Component)]
 #[relationship_target(relationship = PortalCameraChildOf, linked_spawn)]
-struct PortalCameraChildren(Vec<Entity>);
+pub struct PortalCameraChildren(Vec<Entity>);
 
 #[derive(Component)]
 #[relationship(relationship_target = WorldPortalDest)]
-struct WorldPortalSource(pub Entity);
+pub struct WorldPortalSource(pub Entity);
 
 #[derive(Component)]
 #[relationship_target(relationship = WorldPortalSource, linked_spawn)]
-struct WorldPortalDest(Vec<Entity>);
+pub struct WorldPortalDest(Vec<Entity>);
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-struct WorldPortal {
+pub struct WorldPortal {
     pub id: String,
     pub destination_id: String,
     pub facing: Vec3,
@@ -88,7 +88,7 @@ impl WorldPortal {
     classname("func_world_portal")
 )]
 #[derive(Clone, SmartDefault)]
-struct WorldPortalClass {
+pub struct WorldPortalClass {
     #[class(must_set)]
     id: String,
     #[class(must_set)]
@@ -122,16 +122,14 @@ impl WorldPortalClass {
     }
 }
 
-fn link_portals(
+pub fn link_portals(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<PortalMaterial>>,
     fov: Res<FOV>,
     mut portals: Populated<(Entity, &mut WorldPortal, &Aabb), Without<WorldPortalSource>>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    player: Query<(Entity, &CameraSettings), With<PlayerControllerMarker>>,
 ) -> Result {
-    let (player_entity, camera_settings) = player.single()?;
     let window = windows.single()?;
     let fov = fov.into_inner().into();
 
@@ -177,11 +175,7 @@ fn link_portals(
             texture_handle: texture_handle.clone(),
         });
 
-        let mut transform = Transform::from_translation(
-            Vec3::new(0.0, camera_settings.height, 0.0) + source_portal.lateral_offset,
-        );
-
-        commands.entity(player_entity).with_child((
+        commands.spawn((
             Camera {
                 target: texture_handle.into(),
                 ..default()
@@ -189,7 +183,6 @@ fn link_portals(
             Camera3d::default(),
             Projection::from(PerspectiveProjection { fov, ..default() }),
             PortalCameraChildOf(*source_portal_ent),
-            transform,
         ));
 
         commands
@@ -215,7 +208,7 @@ fn link_portals(
     Ok(())
 }
 
-fn update_visibility(
+pub fn update_visibility(
     mut portals: Populated<(Entity, &mut WorldPortal, &ViewVisibility)>,
     mut portal_cameras: Populated<(Entity, &mut Camera), With<PortalCameraChildOf>>,
     camera_relationships: Populated<&PortalCameraChildOf>,
@@ -235,35 +228,36 @@ fn update_visibility(
     }
 }
 
-// fn update_camera_positions(
-//     player_camera: Single<&GlobalTransform, With<WorldCameraMarker>>,
-//     portals: Populated<&WorldPortal>,
-//     mut portal_cameras: Populated<
-//         (Entity, &mut Transform),
-//         (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
-//     >,
-//     camera_relationships: Populated<&PortalCameraChildOf>,
-// ) -> Result {
-//     let (_, player_camera_rotation, player_camera_translation) =
-//         player_camera.into_inner().to_scale_rotation_translation();
+pub fn update_camera_positions(
+    player_camera: Single<&GlobalTransform, With<WorldCameraMarker>>,
+    portals: Populated<&WorldPortal>,
+    mut portal_cameras: Populated<
+        (Entity, &mut Transform),
+        (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
+    >,
+    camera_relationships: Populated<&PortalCameraChildOf>,
+) -> Result {
+    let (_, _player_camera_rotation, player_camera_translation) =
+        player_camera.into_inner().to_scale_rotation_translation();
 
-//     for (camera_ent, mut camera_transform) in portal_cameras.iter_mut() {
-//         let Some(source_portal) = camera_relationships
-//             .iter_ancestors(camera_ent)
-//             .find_map(|ancestor| portals.get(ancestor).ok())
-//         else {
-//             return Err(
-//                 anyhow!("There is a PortalCamera that isn't related to any portal.").into(),
-//             );
-//         };
+    for (camera_ent, mut camera_transform) in portal_cameras.iter_mut() {
+        let Some(source_portal) = camera_relationships
+            .iter_ancestors(camera_ent)
+            .find_map(|ancestor| portals.get(ancestor).ok())
+        else {
+            return Err(
+                anyhow!("There is a PortalCamera that isn't related to any portal.").into(),
+            );
+        };
 
-//         camera_transform.translation = player_camera_translation + source_portal.lateral_offset;
-//         camera_transform.rotation = player_camera_rotation;
-//         camera_transform.rotate_around(
-//             source_portal.destination_center,
-//             source_portal.rotational_offset,
-//         );
-//     }
+        camera_transform.translation = player_camera_translation + source_portal.lateral_offset;
+        // Update camera's rotation in the player's look system
+        //camera_transform.rotation = player_camera_rotation;
+        //camera_transform.rotate_around(
+        //    source_portal.destination_center,
+        //    source_portal.rotational_offset,
+        //);
+    }
 
-//     Ok(())
-// }
+    Ok(())
+}
