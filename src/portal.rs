@@ -8,6 +8,7 @@ use bevy::{
     },
     window::PrimaryWindow,
 };
+use bevy_rapier3d::plugin::RapierTransformPropagateSet;
 use bevy_trenchbroom::{
     anyhow::{self, anyhow},
     class::QuakeClassSpawnView,
@@ -17,7 +18,7 @@ use nil::prelude::SmartDefault;
 
 use crate::{
     PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
-    player::{FOV, WorldCameraMarker, look, movement},
+    player::{FOV, WorldCameraMarker},
     special_materials::PortalMaterial,
 };
 
@@ -28,17 +29,23 @@ impl Plugin for PortalPlugin {
         app.register_type::<WorldPortalClass>()
             .register_type::<WorldPortal>()
             .add_systems(PreUpdate, update_visibility)
-            .add_systems(Update, update_camera_positions.after(look).before(movement))
             .add_systems(
                 PostUpdate,
                 (
                     link_portals,
-                    //update_camera_positions
-                    //    .after(RapierTransformPropagateSet)
-                    //    .before(TransformSystem::TransformPropagate),
+                    update_camera_positions
+                        .after(RapierTransformPropagateSet)
+                        .before(TransformSystem::TransformPropagate),
                 ),
             );
     }
+}
+
+#[derive(Component)]
+pub struct PortalCamera {
+    pub lateral_offset: Vec3,
+    pub rotational_offset: Quat,
+    pub destination_center: Vec3,
 }
 
 #[derive(Component)]
@@ -64,9 +71,6 @@ pub struct WorldPortal {
     pub destination_id: String,
     pub facing: Vec3,
     pub visible: bool,
-    pub lateral_offset: Vec3,
-    pub rotational_offset: Quat,
-    pub destination_center: Vec3,
 }
 
 impl WorldPortal {
@@ -76,9 +80,6 @@ impl WorldPortal {
             destination_id,
             facing,
             visible: false,
-            lateral_offset: Vec3::default(),
-            rotational_offset: Quat::default(),
-            destination_center: Vec3::default(),
         }
     }
 }
@@ -145,15 +146,15 @@ pub fn link_portals(
         let (source_portal_ent, source_portal, source_portal_aabb) = source_portal;
         let (dest_portal_ent, dest_portal, dest_portal_aabb) = dest_portal;
 
-        source_portal.lateral_offset = (dest_portal_aabb.center - source_portal_aabb.center).into();
-        let rotational_offset = dest_portal.facing - source_portal.facing;
-        source_portal.rotational_offset = Quat::from_euler(
+        let lateral_offset = (dest_portal_aabb.center - source_portal_aabb.center).into();
+        let rotational_offset_euler = dest_portal.facing - source_portal.facing;
+        let rotational_offset = Quat::from_euler(
             EulerRot::YXZ,
-            rotational_offset.x.to_radians(),
-            rotational_offset.y.to_radians(),
-            rotational_offset.z.to_radians(),
+            rotational_offset_euler.x.to_radians(),
+            rotational_offset_euler.y.to_radians(),
+            rotational_offset_euler.z.to_radians(),
         );
-        source_portal.destination_center = dest_portal_aabb.center.into();
+        let destination_center = dest_portal_aabb.center.into();
 
         commands
             .entity(*source_portal_ent)
@@ -183,6 +184,11 @@ pub fn link_portals(
             Camera3d::default(),
             Projection::from(PerspectiveProjection { fov, ..default() }),
             PortalCameraChildOf(*source_portal_ent),
+            PortalCamera {
+                lateral_offset,
+                rotational_offset,
+                destination_center,
+            },
         ));
 
         commands
@@ -230,33 +236,18 @@ pub fn update_visibility(
 
 pub fn update_camera_positions(
     player_camera: Single<&GlobalTransform, With<WorldCameraMarker>>,
-    portals: Populated<&WorldPortal>,
-    mut portal_cameras: Populated<
-        (Entity, &mut Transform),
-        (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
-    >,
-    camera_relationships: Populated<&PortalCameraChildOf>,
+    mut portal_cameras: Populated<(&mut Transform, &PortalCamera), Without<WorldCameraMarker>>,
 ) -> Result {
-    let (_, _player_camera_rotation, player_camera_translation) =
-        player_camera.into_inner().to_scale_rotation_translation();
+    let player_camera_transform = player_camera.into_inner().compute_transform();
 
-    for (camera_ent, mut camera_transform) in portal_cameras.iter_mut() {
-        let Some(source_portal) = camera_relationships
-            .iter_ancestors(camera_ent)
-            .find_map(|ancestor| portals.get(ancestor).ok())
-        else {
-            return Err(
-                anyhow!("There is a PortalCamera that isn't related to any portal.").into(),
-            );
-        };
-
-        camera_transform.translation = player_camera_translation + source_portal.lateral_offset;
-        // Update camera's rotation in the player's look system
-        //camera_transform.rotation = player_camera_rotation;
-        //camera_transform.rotate_around(
-        //    source_portal.destination_center,
-        //    source_portal.rotational_offset,
-        //);
+    for (mut portal_camera_transform, portal_camera) in portal_cameras.iter_mut() {
+        portal_camera_transform.translation =
+            player_camera_transform.translation + portal_camera.lateral_offset;
+        portal_camera_transform.rotation = player_camera_transform.rotation;
+        portal_camera_transform.rotate_around(
+            portal_camera.destination_center,
+            portal_camera.rotational_offset,
+        )
     }
 
     Ok(())

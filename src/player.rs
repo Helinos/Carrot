@@ -1,16 +1,11 @@
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::{
-    input::mouse::AccumulatedMouseMotion, prelude::*, render::view::RenderLayers,
-    scene::SceneInstanceReady,
-};
+use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*, render::view::RenderLayers};
 use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::class::builtin::InfoPlayerStart;
 use nestify::nest;
 
-use crate::{
-    DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2, portal::PortalCameraChildOf,
-};
+use crate::{DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2};
 
 pub struct PlayerPlugin;
 
@@ -82,7 +77,7 @@ nest! {
             Relative(Vec2),
         },
         pub controller_sensitivity: CameraSensitivity,
-        pub height: f32,
+        pub camera_height: f32,
     }
 }
 
@@ -163,7 +158,7 @@ pub struct PlayerVelocity(Vec3);
         allow_movement: false,
         mouse_sensitivity: CameraSensitivity::Linear(0.003),
         controller_sensitivity: CameraSensitivity::Linear(0.005),
-        height: 1.79,
+        camera_height: 1.79,
     },
     MovementSettings {
         walking_speed: 7.0,
@@ -223,12 +218,17 @@ fn spawn_player(
         .insert(PlayerSpawnedMarker)
         .with_child((
             WorldCameraMarker,
+            // Camera should render after portal cameras, otherwise portals will be a frame behind
+            Camera {
+                order: 1,
+                ..default()
+            },
             Camera3d::default(),
             Projection::from(PerspectiveProjection {
                 fov: fov.into_inner().into(),
                 ..default()
             }),
-            Transform::from_xyz(0.0, camera_settings.height, 0.0),
+            Transform::from_xyz(0.0, camera_settings.camera_height, 0.0),
             RenderLayers::from_layers(&[
                 DEFAULT_RENDER_LAYER,
                 PORTAL_RENDER_LAYER_1,
@@ -295,13 +295,9 @@ pub fn mouse_input(
 }
 
 pub fn look(
-    player: Single<&mut Transform, (With<PlayerControllerMarker>, Without<WorldCameraMarker>)>,
+    player: Single<&mut Transform, (With<PlayerControllerMarker>, Without<Camera3d>)>,
     player_camera: Single<&mut Transform, (With<Camera3d>, With<WorldCameraMarker>)>,
     mut movement_event_reader: EventReader<MovementAction>,
-    mut portal_cameras: Populated<
-        (Entity, &mut Transform),
-        (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
-    >,
 ) {
     let mut player_transform = player.into_inner();
     let mut camera_transform = player_camera.into_inner();
@@ -312,11 +308,11 @@ pub fn look(
                 let (_, camera_pitch, _) = camera_transform.rotation.to_euler(EulerRot::YXZ);
 
                 const PITCH_LIMIT: f32 = FRAC_PI_2 - 0.01;
-                let clamped_delta =
+                let clamped_delta_pitch =
                     (camera_pitch + delta.y).clamp(-PITCH_LIMIT, PITCH_LIMIT) - camera_pitch;
 
-                player_transform.rotate_local_y(delta.x);
-                camera_transform.rotate_local_x(clamped_delta);
+                player_transform.rotate_y(delta.x);
+                camera_transform.rotate_x(clamped_delta_pitch);
             }
             _ => (),
         }
