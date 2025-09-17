@@ -17,8 +17,8 @@ use bevy_trenchbroom::{
 use nil::prelude::SmartDefault;
 
 use crate::{
-    DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
-    player::{FOV, WorldCameraMarker},
+    PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
+    player::{CameraSettings, FOV, PlayerControllerMarker, WorldCameraMarker},
     special_materials::PortalMaterial,
 };
 
@@ -33,9 +33,9 @@ impl Plugin for PortalPlugin {
                 PostUpdate,
                 (
                     link_portals,
-                    update_camera_positions
-                        .after(RapierTransformPropagateSet)
-                        .before(TransformSystem::TransformPropagate),
+                    // update_camera_positions
+                    //     .after(RapierTransformPropagateSet)
+                    //     .before(TransformSystem::TransformPropagate),
                 ),
             );
     }
@@ -129,7 +129,9 @@ fn link_portals(
     fov: Res<FOV>,
     mut portals: Populated<(Entity, &mut WorldPortal, &Aabb), Without<WorldPortalSource>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    player: Query<(Entity, &CameraSettings), With<PlayerControllerMarker>>,
 ) -> Result {
+    let (player_entity, camera_settings) = player.single()?;
     let window = windows.single()?;
     let fov = fov.into_inner().into();
 
@@ -175,7 +177,11 @@ fn link_portals(
             texture_handle: texture_handle.clone(),
         });
 
-        commands.spawn((
+        let mut transform = Transform::from_translation(
+            Vec3::new(0.0, camera_settings.height, 0.0) + source_portal.lateral_offset,
+        );
+
+        commands.entity(player_entity).with_child((
             Camera {
                 target: texture_handle.into(),
                 ..default()
@@ -183,6 +189,7 @@ fn link_portals(
             Camera3d::default(),
             Projection::from(PerspectiveProjection { fov, ..default() }),
             PortalCameraChildOf(*source_portal_ent),
+            transform,
         ));
 
         commands
@@ -228,35 +235,35 @@ fn update_visibility(
     }
 }
 
-fn update_camera_positions(
-    player_camera: Single<&GlobalTransform, With<WorldCameraMarker>>,
-    portals: Populated<&WorldPortal>,
-    mut portal_cameras: Populated<
-        (Entity, &mut Transform),
-        (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
-    >,
-    camera_relationships: Populated<&PortalCameraChildOf>,
-) -> Result {
-    let (_, player_camera_rotation, player_camera_translation) =
-        player_camera.into_inner().to_scale_rotation_translation();
+// fn update_camera_positions(
+//     player_camera: Single<&GlobalTransform, With<WorldCameraMarker>>,
+//     portals: Populated<&WorldPortal>,
+//     mut portal_cameras: Populated<
+//         (Entity, &mut Transform),
+//         (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
+//     >,
+//     camera_relationships: Populated<&PortalCameraChildOf>,
+// ) -> Result {
+//     let (_, player_camera_rotation, player_camera_translation) =
+//         player_camera.into_inner().to_scale_rotation_translation();
 
-    for (camera_ent, mut camera_transform) in portal_cameras.iter_mut() {
-        let Some(source_portal) = camera_relationships
-            .iter_ancestors(camera_ent)
-            .find_map(|ancestor| portals.get(ancestor).ok())
-        else {
-            return Err(
-                anyhow!("There is a PortalCamera that isn't related to any portal.").into(),
-            );
-        };
+//     for (camera_ent, mut camera_transform) in portal_cameras.iter_mut() {
+//         let Some(source_portal) = camera_relationships
+//             .iter_ancestors(camera_ent)
+//             .find_map(|ancestor| portals.get(ancestor).ok())
+//         else {
+//             return Err(
+//                 anyhow!("There is a PortalCamera that isn't related to any portal.").into(),
+//             );
+//         };
 
-        camera_transform.translation = player_camera_translation + source_portal.lateral_offset;
-        camera_transform.rotation = player_camera_rotation;
-        camera_transform.rotate_around(
-            source_portal.destination_center,
-            source_portal.rotational_offset,
-        );
-    }
+//         camera_transform.translation = player_camera_translation + source_portal.lateral_offset;
+//         camera_transform.rotation = player_camera_rotation;
+//         camera_transform.rotate_around(
+//             source_portal.destination_center,
+//             source_portal.rotational_offset,
+//         );
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }

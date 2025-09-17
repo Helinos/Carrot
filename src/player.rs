@@ -18,7 +18,10 @@ impl Plugin for PlayerPlugin {
             .init_resource::<FOV>()
             .add_systems(PreUpdate, (mouse_input, keyboard_input))
             .add_systems(Update, (headbob_effect, look, movement.after(look)))
-            .add_observer(spawn_player);
+            .add_systems(
+                PostUpdate,
+                spawn_player.after(TransformSystem::TransformPropagate),
+            );
     }
 }
 
@@ -77,7 +80,7 @@ nest! {
             Relative(Vec2),
         },
         pub controller_sensitivity: CameraSensitivity,
-        pub distance_from_ground: f32,
+        pub height: f32,
     }
 }
 
@@ -149,7 +152,7 @@ impl Default for ControllerAimAcceleration {
 }
 
 #[derive(Component, Default)]
-struct PlayerVelocity(Vec3);
+pub struct PlayerVelocity(Vec3);
 
 #[derive(Component, Default)]
 #[require(
@@ -158,7 +161,7 @@ struct PlayerVelocity(Vec3);
         allow_movement: false,
         mouse_sensitivity: CameraSensitivity::Linear(0.003),
         controller_sensitivity: CameraSensitivity::Linear(0.005),
-        distance_from_ground: 1.79,
+        height: 1.79,
     },
     MovementSettings {
         walking_speed: 7.0,
@@ -187,48 +190,64 @@ struct PlayerVelocity(Vec3);
     },
     GravityScale(1.5),
 )]
-
 pub struct PlayerControllerMarker;
 
 #[derive(Component)]
 pub struct WorldCameraMarker;
 
+#[derive(Component)]
+pub struct PlayerSpawnedMarker;
+
+/// Marker for a child entity that should contain only the transform for modifying the player's rotation differently than the things that are children of the player.
+/// The entity with the WorldCameraMarker should be a child of this entity.
+#[derive(Component)]
+pub struct PlayerRotationMarker;
+
 fn spawn_player(
-    _trigger: Trigger<SceneInstanceReady>,
-    mut player_entity_query: Query<
+    player: Single<
         (Entity, &mut Transform, &CameraSettings),
-        With<PlayerControllerMarker>,
+        (With<PlayerControllerMarker>, Without<PlayerSpawnedMarker>),
     >,
-    player_start_query: Populated<
-        &Transform,
-        (With<InfoPlayerStart>, Without<PlayerControllerMarker>),
-    >,
+    player_start: Populated<&Transform, (With<InfoPlayerStart>, Without<PlayerControllerMarker>)>,
     fov: Res<FOV>,
     mut commands: Commands,
 ) -> Result {
-    let (entity, mut player_transform, camera_settings) = player_entity_query.single_mut()?;
+    let (entity, mut player_transform, camera_settings) = player.into_inner();
 
-    let transforms: Vec<&Transform> = player_start_query.iter().collect();
-    if let Some(player_start_transform) = transforms.get(0) {
-        *player_transform = **player_start_transform;
-    }
+    let transforms: Vec<&Transform> = player_start.iter().collect();
+    let Some(player_start_transform) = transforms.get(0) else {
+        return Ok(());
+    };
 
-    commands.entity(entity).with_children(|parent| {
-        parent.spawn((
-            WorldCameraMarker,
-            Camera3d::default(),
-            Projection::from(PerspectiveProjection {
-                fov: fov.into_inner().into(),
-                ..default()
-            }),
-            Transform::from_xyz(0.0, camera_settings.distance_from_ground, 0.0),
-            RenderLayers::from_layers(&[
-                DEFAULT_RENDER_LAYER,
-                PORTAL_RENDER_LAYER_1,
-                PORTAL_RENDER_LAYER_2,
-            ]),
-        ));
-    });
+    println!("{:?}", player_start_transform);
+
+    player_transform.translation = player_start_transform.translation;
+
+    println!("{:?}", player_transform);
+
+    let rotation = Transform::from_rotation(player_start_transform.rotation);
+
+    commands
+        .entity(entity)
+        .insert(PlayerSpawnedMarker)
+        .with_children(|parent| {
+            let mut player_rotation = parent.spawn((PlayerRotationMarker, rotation));
+
+            player_rotation.with_child((
+                WorldCameraMarker,
+                Camera3d::default(),
+                Projection::from(PerspectiveProjection {
+                    fov: fov.into_inner().into(),
+                    ..default()
+                }),
+                Transform::from_xyz(0.0, camera_settings.height, 0.0),
+                RenderLayers::from_layers(&[
+                    DEFAULT_RENDER_LAYER,
+                    PORTAL_RENDER_LAYER_1,
+                    PORTAL_RENDER_LAYER_2,
+                ]),
+            ));
+        });
 
     Ok(())
 }
@@ -289,12 +308,15 @@ fn mouse_input(
 }
 
 fn look(
-    player_query: Single<&mut Transform, (With<PlayerControllerMarker>, Without<ChildOf>)>,
-    camera_query: Single<&mut Transform, (With<Camera3d>, With<ChildOf>, With<WorldCameraMarker>)>,
+    player_rotation: Single<
+        &mut Transform,
+        (With<PlayerRotationMarker>, Without<WorldCameraMarker>),
+    >,
+    camera: Single<&mut Transform, (With<Camera3d>, With<WorldCameraMarker>)>,
     mut movement_event_reader: EventReader<MovementAction>,
 ) {
-    let mut player_transform = player_query.into_inner();
-    let mut camera_transform = camera_query.into_inner();
+    let mut player_yaw_transform = player_rotation.into_inner();
+    let mut camera_transform = camera.into_inner();
 
     for event in movement_event_reader.read() {
         match event {
@@ -305,7 +327,7 @@ fn look(
                 let clamped_delta =
                     (camera_pitch + delta.y).clamp(-PITCH_LIMIT, PITCH_LIMIT) - camera_pitch;
 
-                player_transform.rotate_local_y(delta.x);
+                player_yaw_transform.rotate_local_y(delta.x);
                 camera_transform.rotate_local_x(clamped_delta);
             }
             _ => (),
@@ -313,12 +335,11 @@ fn look(
     }
 }
 
-fn movement(
+pub fn movement(
     time: Res<Time>,
     mut movement_event_reader: EventReader<MovementAction>,
-    mut query: Query<
+    player: Single<
         (
-            &Transform,
             &mut PlayerVelocity,
             &mut KinematicCharacterController,
             Option<&KinematicCharacterControllerOutput>,
@@ -328,24 +349,21 @@ fn movement(
         ),
         With<PlayerControllerMarker>,
     >,
+    player_rotation: Single<&Transform, With<PlayerRotationMarker>>,
 ) -> Result {
     let delta_time = time.delta_secs();
-    let (
-        transform,
-        mut velocity,
-        mut controller,
-        output,
-        jump_settings,
-        movement_settings,
-        gravity_scale,
-    ) = query.single_mut()?;
 
-    let vertical_velocity = &mut velocity.0.y;
-    let is_grounded = output.map_or(false, |o| o.grounded && *vertical_velocity <= 0.0);
+    let (mut velocity, mut controller, output, jump_settings, movement_settings, gravity_scale) =
+        player.into_inner();
+
+    let player_rot_transform = player_rotation.into_inner();
+
+    let velocity = &mut velocity.0;
+    let is_grounded = output.map_or(false, |o| o.grounded && velocity.y <= 0.0);
 
     // Ground movement
     if is_grounded {
-        *vertical_velocity = 0.0;
+        velocity.y = 0.0;
 
         for event in movement_event_reader.read() {
             match event {
@@ -353,29 +371,29 @@ fn movement(
                     input_direction,
                     movement_speed,
                 } => {
-                    let wish_direction = transform
+                    let wish_direction = player_rot_transform
                         .rotation
                         .mul_vec3(input_direction.extend(0.0).xzy());
-                    let current_speed_in_wish_direction = velocity.0.dot(wish_direction);
+                    let current_speed_in_wish_direction = velocity.dot(wish_direction);
                     let add_speed_till_cap = movement_speed - current_speed_in_wish_direction;
                     if add_speed_till_cap > 0.0 {
                         let mut acceleration =
                             movement_settings.ground_acceleration * movement_speed * delta_time;
                         acceleration = acceleration.min(add_speed_till_cap);
 
-                        velocity.0 += acceleration * wish_direction;
+                        *velocity += acceleration * wish_direction;
                     }
                 }
                 MovementAction::Jump => {
                     if let Some(jump_settings) = jump_settings {
-                        velocity.0.y = jump_settings.impulse;
+                        velocity.y = jump_settings.impulse;
                     }
                 }
                 _ => (),
             }
         }
 
-        let lateral_velocity = velocity.0.xz().length();
+        let lateral_velocity = velocity.xz().length();
         let deceleration_force = lateral_velocity.max(movement_settings.ground_deceleration);
         let deceleration_velocity =
             deceleration_force * movement_settings.ground_friction * delta_time as f32;
@@ -384,12 +402,12 @@ fn movement(
             new_speed /= lateral_velocity;
         }
 
-        velocity.0.x *= new_speed;
-        velocity.0.z *= new_speed;
+        velocity.x *= new_speed;
+        velocity.z *= new_speed;
     }
     // Air movement
     else {
-        *vertical_velocity -= 9.8 * gravity_scale.0 * delta_time;
+        velocity.y -= 9.8 * gravity_scale.0 * delta_time;
 
         for event in movement_event_reader.read() {
             match event {
@@ -397,10 +415,10 @@ fn movement(
                     input_direction,
                     movement_speed: _,
                 } => {
-                    let wish_direction = transform
+                    let wish_direction = player_rot_transform
                         .rotation
                         .mul_vec3(input_direction.extend(0.0).xzy());
-                    let current_speed_in_wish_direction = velocity.0.dot(wish_direction);
+                    let current_speed_in_wish_direction = velocity.dot(wish_direction);
                     let capped_speed = (movement_settings.air_move_speed * wish_direction)
                         .length()
                         .min(movement_settings.air_cap);
@@ -411,7 +429,7 @@ fn movement(
                             * delta_time;
                         acceleration_speed = acceleration_speed.min(add_speed_till_cap);
 
-                        velocity.0 += acceleration_speed * wish_direction;
+                        *velocity += acceleration_speed * wish_direction;
                     }
                 }
                 _ => (),
@@ -419,7 +437,7 @@ fn movement(
         }
     }
 
-    controller.translation = Some(velocity.0 * delta_time);
+    controller.translation = Some(*velocity * delta_time);
 
     Ok(())
 }
