@@ -8,7 +8,9 @@ use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::class::builtin::InfoPlayerStart;
 use nestify::nest;
 
-use crate::{DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2};
+use crate::{
+    DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2, portal::PortalCameraChildOf,
+};
 
 pub struct PlayerPlugin;
 
@@ -149,7 +151,7 @@ impl Default for ControllerAimAcceleration {
 }
 
 #[derive(Component, Default)]
-struct PlayerVelocity(Vec3);
+pub struct PlayerVelocity(Vec3);
 
 #[derive(Component, Default)]
 #[require(
@@ -193,7 +195,7 @@ pub struct PlayerControllerMarker;
 #[derive(Component)]
 pub struct WorldCameraMarker;
 
-fn spawn_player(
+pub fn spawn_player(
     _trigger: Trigger<SceneInstanceReady>,
     mut player_entity_query: Query<
         (Entity, &mut Transform, &CameraSettings),
@@ -233,7 +235,7 @@ fn spawn_player(
     Ok(())
 }
 
-fn keyboard_input(
+pub fn keyboard_input(
     player_settings: Single<
         (Option<&JumpSettings>, &MovementSettings),
         With<PlayerControllerMarker>,
@@ -274,7 +276,7 @@ fn keyboard_input(
     }
 }
 
-fn mouse_input(
+pub fn mouse_input(
     camera_settings: Single<&CameraSettings>,
     accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
     mut movement_event_writer: EventWriter<MovementAction>,
@@ -288,13 +290,17 @@ fn mouse_input(
     }
 }
 
-fn look(
-    player_query: Single<&mut Transform, (With<PlayerControllerMarker>, Without<ChildOf>)>,
-    camera_query: Single<&mut Transform, (With<Camera3d>, With<ChildOf>, With<WorldCameraMarker>)>,
+pub fn look(
+    player: Single<&mut Transform, (With<PlayerControllerMarker>, Without<ChildOf>)>,
+    player_camera: Single<&mut Transform, (With<Camera3d>, With<ChildOf>, With<WorldCameraMarker>)>,
     mut movement_event_reader: EventReader<MovementAction>,
+    mut portal_cameras: Populated<
+        (Entity, &mut Transform),
+        (With<PortalCameraChildOf>, Without<WorldCameraMarker>),
+    >,
 ) {
-    let mut player_transform = player_query.into_inner();
-    let mut camera_transform = camera_query.into_inner();
+    let mut player_transform = player.into_inner();
+    let mut camera_transform = player_camera.into_inner();
 
     for event in movement_event_reader.read() {
         match event {
@@ -313,7 +319,8 @@ fn look(
     }
 }
 
-fn movement(
+// TODO: Split ground/air movement back into two separate systems.
+pub fn movement(
     time: Res<Time>,
     mut movement_event_reader: EventReader<MovementAction>,
     mut query: Query<
@@ -424,7 +431,7 @@ fn movement(
     Ok(())
 }
 
-fn headbob_effect(
+pub fn headbob_effect(
     time: Res<Time>,
     headbob_settings: Option<Single<&HeadbobSettings, With<PlayerControllerMarker>>>,
 ) {
