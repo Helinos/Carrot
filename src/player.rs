@@ -224,8 +224,9 @@ fn spawn_player(
                 ..default()
             },
             Camera3d::default(),
-            Projection::from(PerspectiveProjection {
+            Projection::Perspective(PerspectiveProjection {
                 fov: fov.into_inner().into(),
+                near: 0.00001,
                 ..default()
             }),
             Transform::from_xyz(0.0, camera_settings.camera_height, 0.0),

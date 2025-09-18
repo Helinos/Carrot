@@ -17,8 +17,7 @@ use bevy_trenchbroom::{
 use nil::prelude::SmartDefault;
 
 use crate::{
-    PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
-    player::{FOV, WorldCameraMarker},
+    PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2, player::WorldCameraMarker,
     special_materials::PortalMaterial,
 };
 
@@ -26,13 +25,13 @@ pub struct PortalPlugin;
 
 impl Plugin for PortalPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<WorldPortalClass>()
-            .register_type::<WorldPortal>()
+        app.register_type::<PortalClass>()
+            .register_type::<PortalGeometry>()
             .add_systems(PreUpdate, update_visibility)
             .add_systems(
                 PostUpdate,
                 (
-                    link_portals,
+                    setup_portals,
                     update_camera_positions
                         .after(RapierTransformPropagateSet)
                         .before(TransformSystem::TransformPropagate),
@@ -57,31 +56,32 @@ pub struct PortalCameraChildOf(pub Entity);
 pub struct PortalCameraChildren(Vec<Entity>);
 
 #[derive(Component)]
-#[relationship(relationship_target = WorldPortalDest)]
-pub struct WorldPortalSource(pub Entity);
+#[relationship(relationship_target = PortalDestination)]
+pub struct PortalSource(pub Entity);
 
 #[derive(Component)]
-#[relationship_target(relationship = WorldPortalSource, linked_spawn)]
-pub struct WorldPortalDest(Vec<Entity>);
+#[relationship_target(relationship = PortalSource, linked_spawn)]
+pub struct PortalDestination(Vec<Entity>);
+
+#[derive(Component)]
+#[relationship(relationship_target = PortalSurfaceChildren)]
+pub struct PortalSurfaceChildOf(pub Entity);
+
+#[derive(Component)]
+#[relationship_target(relationship = PortalSurfaceChildOf, linked_spawn)]
+pub struct PortalSurfaceChildren(Vec<Entity>);
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-pub struct WorldPortal {
+pub struct PortalGeometry {
     pub id: String,
     pub destination_id: String,
     pub facing: Vec3,
-    pub visible: bool,
 }
 
-impl WorldPortal {
-    fn new(id: String, destination_id: String, facing: Vec3) -> Self {
-        Self {
-            id,
-            destination_id,
-            facing,
-            visible: false,
-        }
-    }
+#[derive(Component)]
+pub struct PortalSurface {
+    visible: bool,
 }
 
 #[solid_class(
@@ -89,7 +89,7 @@ impl WorldPortal {
     classname("func_world_portal")
 )]
 #[derive(Clone, SmartDefault)]
-pub struct WorldPortalClass {
+pub struct PortalClass {
     #[class(must_set)]
     id: String,
     #[class(must_set)]
@@ -99,7 +99,7 @@ pub struct WorldPortalClass {
     facing: Vec3,
 }
 
-impl WorldPortalClass {
+impl PortalClass {
     pub fn spawn_hook(view: &mut QuakeClassSpawnView) -> anyhow::Result<()> {
         let quake_mesh_view = if view.meshes.len() == 1 {
             &view.meshes[0]
@@ -117,22 +117,27 @@ impl WorldPortalClass {
         view.world
             .commands()
             .entity(quake_mesh_view.entity)
-            .insert(WorldPortal::new(id, destination_id, facing));
+            .insert(PortalGeometry {
+                id,
+                destination_id,
+                facing,
+            });
 
         Ok(())
     }
 }
 
-pub fn link_portals(
+pub fn setup_portals(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<PortalMaterial>>,
-    fov: Res<FOV>,
-    mut portals: Populated<(Entity, &mut WorldPortal, &Aabb), Without<WorldPortalSource>>,
+    portals: Populated<(Entity, &PortalGeometry, &Aabb), Without<PortalSurfaceChildren>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    player_camera: Single<&Projection, With<WorldCameraMarker>>,
 ) -> Result {
     let window = windows.single()?;
-    let fov = fov.into_inner().into();
+    let player_camera_projection = player_camera.into_inner();
 
     let size = Extent3d {
         width: window.physical_width(),
@@ -140,25 +145,25 @@ pub fn link_portals(
         ..default()
     };
 
-    let mut link = |source_portal: &mut (Entity, Mut<'_, WorldPortal>, &Aabb),
-                    dest_portal: &(Entity, Mut<'_, WorldPortal>, &Aabb),
-                    portal_render_layer: usize| {
+    fn euler_to_quat(euler: Vec3) -> Quat {
+        Quat::from_euler(
+            EulerRot::YXZ,
+            euler.x.to_radians(),
+            euler.y.to_radians(),
+            euler.z.to_radians(),
+        )
+    }
+
+    let mut setup_portal = |source_portal: &(Entity, &PortalGeometry, &Aabb),
+                            dest_portal: &(Entity, &PortalGeometry, &Aabb),
+                            portal_render_layer: usize| {
         let (source_portal_ent, source_portal, source_portal_aabb) = source_portal;
         let (dest_portal_ent, dest_portal, dest_portal_aabb) = dest_portal;
 
-        let lateral_offset = (dest_portal_aabb.center - source_portal_aabb.center).into();
+        let lateral_offset = dest_portal_aabb.center - source_portal_aabb.center;
         let rotational_offset_euler = dest_portal.facing - source_portal.facing;
-        let rotational_offset = Quat::from_euler(
-            EulerRot::YXZ,
-            rotational_offset_euler.x.to_radians(),
-            rotational_offset_euler.y.to_radians(),
-            rotational_offset_euler.z.to_radians(),
-        );
+        let rotational_offset = euler_to_quat(rotational_offset_euler);
         let destination_center = dest_portal_aabb.center.into();
-
-        commands
-            .entity(*source_portal_ent)
-            .insert(WorldPortalSource(*dest_portal_ent));
 
         let mut texture = Image::new_uninit(
             size,
@@ -176,6 +181,35 @@ pub fn link_portals(
             texture_handle: texture_handle.clone(),
         });
 
+        let portal_normal_quat = euler_to_quat(source_portal.facing);
+        let portal_up_vec = portal_normal_quat * Vec3A::Y;
+        let portal_side_vec = portal_normal_quat * Vec3A::Z;
+
+        let portal_height = source_portal_aabb.relative_radius(&portal_up_vec, &Mat3A::IDENTITY);
+        let portal_width = source_portal_aabb.relative_radius(&portal_side_vec, &Mat3A::IDENTITY);
+
+        let (fov, near, aspect_ratio) = match player_camera_projection {
+            Projection::Perspective(perspective_projection) => (
+                perspective_projection.fov,
+                perspective_projection.near,
+                perspective_projection.aspect_ratio,
+            ),
+            _ => panic!("Expected player to have a perspective projection."),
+        };
+
+        let near_plane_half_height = near * (fov * 0.5).to_radians().tan();
+        let near_plane_half_width = near_plane_half_height * aspect_ratio;
+        let near_plane_diagonal_radius =
+            Vec3::new(near_plane_half_width, near_plane_half_height, near).length();
+
+        let portal_cuboid = Cuboid {
+            half_size: Vec3::new(near_plane_diagonal_radius, portal_height, portal_width),
+        };
+
+        commands
+            .entity(*source_portal_ent)
+            .remove::<GenericMaterial3d>();
+
         commands.spawn((
             Camera {
                 target: texture_handle.into(),
@@ -185,37 +219,40 @@ pub fn link_portals(
             Projection::from(PerspectiveProjection { fov, ..default() }),
             PortalCameraChildOf(*source_portal_ent),
             PortalCamera {
-                lateral_offset,
+                lateral_offset: lateral_offset.into(),
                 rotational_offset,
                 destination_center,
             },
         ));
 
-        commands
-            .entity(*source_portal_ent)
-            .remove::<GenericMaterial3d>()
-            .insert((
-                MeshMaterial3d(portal_material_handle),
-                RenderLayers::layer(portal_render_layer),
-            ));
+        commands.spawn((
+            PortalSurface { visible: false },
+            PortalSurfaceChildOf(*source_portal_ent),
+            PortalSource(*dest_portal_ent),
+            Mesh3d(meshes.add(portal_cuboid)),
+            MeshMaterial3d(portal_material_handle),
+            RenderLayers::layer(portal_render_layer),
+            Transform::from_rotation(portal_normal_quat)
+                .with_translation(source_portal_aabb.center.into()),
+        ));
     };
 
-    let mut combinations = portals.iter_combinations_mut();
-    while let Some([mut portal_1, mut portal_2]) = combinations.fetch_next() {
+    let mut combinations = portals.iter_combinations();
+    while let Some([portal_1, portal_2]) = combinations.fetch_next() {
         if portal_1.1.id != portal_2.1.destination_id || portal_1.1.destination_id != portal_2.1.id
         {
             continue;
         }
 
-        link(&mut portal_1, &portal_2, PORTAL_RENDER_LAYER_1);
-        link(&mut portal_2, &portal_1, PORTAL_RENDER_LAYER_2);
+        setup_portal(&portal_1, &portal_2, PORTAL_RENDER_LAYER_1);
+        setup_portal(&portal_2, &portal_1, PORTAL_RENDER_LAYER_2);
     }
 
     Ok(())
 }
 
 pub fn update_visibility(
-    mut portals: Populated<(Entity, &mut WorldPortal, &ViewVisibility)>,
+    mut portals: Populated<(Entity, &mut PortalSurface, &ViewVisibility)>,
     mut portal_cameras: Populated<(Entity, &mut Camera), With<PortalCameraChildOf>>,
     camera_relationships: Populated<&PortalCameraChildOf>,
 ) {

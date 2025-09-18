@@ -23,6 +23,7 @@ use crate::{
 
 mod player;
 mod portal;
+mod projection;
 mod special_materials;
 
 fn main() {
