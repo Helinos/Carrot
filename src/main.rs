@@ -13,17 +13,17 @@ use bevy_trenchbroom::{
 use nil::ShortToString;
 
 use crate::{
+    brushes::BrushPlugin,
     player::{
         CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerControllerMarker,
         PlayerPlugin,
     },
-    portal::PortalPlugin,
     special_materials::SpecialMaterialsPlugin,
 };
 
+mod brushes;
 mod player;
-mod portal;
-mod projection;
+mod projections;
 mod special_materials;
 
 fn main() {
@@ -61,7 +61,7 @@ fn main() {
             EguiPlugin::default(),
             WorldInspectorPlugin::new(),
             FramepacePlugin,
-            PortalPlugin,
+            BrushPlugin,
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, grab_cursor)
