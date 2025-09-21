@@ -2,9 +2,12 @@ use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
     render::{
+        Extract, Render, RenderApp, RenderSet,
+        camera::{CameraProjection, extract_cameras},
         primitives::Aabb,
         render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
-        view::RenderLayers,
+        sync_world::RenderEntity,
+        view::{ExtractedView, RenderLayers},
     },
     window::PrimaryWindow,
 };
@@ -35,13 +38,24 @@ impl Plugin for PortalPlugin {
                     update_camera_positions
                         .after(RapierTransformPropagateSet)
                         .before(TransformSystem::TransformPropagate),
-                    update_camera_projections,
+                    update_camera_projections.after(TransformSystem::TransformPropagate),
                 ),
             );
+
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app
+                .add_systems(ExtractSchedule, extract_projections.after(extract_cameras))
+                .add_systems(
+                    Render,
+                    replace_extracted_projection
+                        .after(RenderSet::ExtractCommands)
+                        .before(RenderSet::PrepareAssets),
+                );
+        }
     }
 }
 
-#[derive(Component, Clone)]
+#[derive(Component)]
 pub struct PortalCamera {
     pub source_transform: Transform,
     pub dest_transform: Transform,
@@ -146,6 +160,9 @@ pub fn setup_portals(
         ..default()
     };
 
+    println!("Hey");
+    info!("Hey");
+
     let mut setup_portal = |source_portal: &(Entity, &PortalGeometry, &Aabb),
                             dest_portal: &(Entity, &PortalGeometry, &Aabb),
                             portal_render_layer: usize| {
@@ -167,6 +184,15 @@ pub fn setup_portals(
         let portal_material_handle = materials.add(PortalMaterial {
             texture_handle: texture_handle.clone(),
         });
+
+        fn euler_deg_to_quat(euler: Vec3) -> Quat {
+            Quat::from_euler(
+                EulerRot::YXZ,
+                euler.x.to_radians(),
+                euler.y.to_radians(),
+                euler.z.to_radians(),
+            )
+        }
 
         let portal_rotation = euler_deg_to_quat(source_portal_geometry.normal);
         let dest_portal_rotation = euler_deg_to_quat(dest_portal_geometry.normal);
@@ -317,7 +343,9 @@ pub fn update_camera_projections(
             .normalize()
             * sign;
 
+        // There is a very small seam between the portal and the near plane that is seemingly exagerated at higher viewing angles.
         const NEAR_PLANE_OFFSET: f32 = 0.1;
+        // The projection breaks when the camera is very close to the portal surface.
         const NEAR_CLIP_LIMIT: f32 = 0.1;
 
         let v_plane_distance = -v_dest_translation.dot(v_dest_normal) + NEAR_PLANE_OFFSET;
@@ -330,11 +358,19 @@ pub fn update_camera_projections(
     }
 }
 
-fn euler_deg_to_quat(euler: Vec3) -> Quat {
-    Quat::from_euler(
-        EulerRot::YXZ,
-        euler.x.to_radians(),
-        euler.y.to_radians(),
-        euler.z.to_radians(),
-    )
+pub fn extract_projections(
+    mut commands: Commands,
+    projections: Extract<Query<(RenderEntity, &Projection)>>,
+) {
+    for (render_ent, projection) in projections.iter() {
+        commands.entity(render_ent).insert(projection.clone());
+    }
+}
+
+// Recalculate the projection matrix in the extracted view because it's currently from a frame ago.
+// This query is definitely not robust enough... Oh well.
+pub fn replace_extracted_projection(projections: Query<(&Projection, &mut ExtractedView)>) {
+    for (projection, mut view) in projections {
+        view.clip_from_view = projection.get_clip_from_view();
+    }
 }
