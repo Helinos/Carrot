@@ -156,7 +156,7 @@ pub struct PlayerVelocity(Vec3);
     Transform,
     CameraSettings {
         allow_movement: false,
-        mouse_sensitivity: CameraSensitivity::Linear(0.003),
+        mouse_sensitivity: CameraSensitivity::Linear(0.0015),
         controller_sensitivity: CameraSensitivity::Linear(0.005),
         camera_height: 1.79,
     },

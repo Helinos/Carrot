@@ -24,18 +24,18 @@ impl CameraProjection for ObliquePerspectiveProjection {
         let mut clip_from_view = self.get_clip_from_view_pre_modification();
 
         let v_camera = Vec4::new(
-            (self.view_near_plane.x.signum() - clip_from_view.col(0)[2]) / clip_from_view.col(0)[0],
-            (self.view_near_plane.y.signum() - clip_from_view.col(1)[2]) / clip_from_view.col(1)[1],
-            1.,
-            clip_from_view.col(2)[2] / clip_from_view.col(2)[3],
+            (self.view_near_plane.x.signum() - clip_from_view.col(2)[0]) / clip_from_view.col(0)[0],
+            (self.view_near_plane.y.signum() - clip_from_view.col(2)[1]) / clip_from_view.col(1)[1],
+            -1.,
+            clip_from_view.col(2)[2] / clip_from_view.col(3)[2],
         );
 
         let m = -1. / self.view_near_plane.dot(v_camera);
 
-        clip_from_view.x_axis.z = m * self.view_near_plane.x;
-        clip_from_view.y_axis.z = m * self.view_near_plane.y;
-        clip_from_view.z_axis.z = m * self.view_near_plane.z + 1.0;
-        clip_from_view.w_axis.z = m * self.view_near_plane.w;
+        clip_from_view.col_mut(0)[2] = m * self.view_near_plane.x;
+        clip_from_view.col_mut(1)[2] = m * self.view_near_plane.y;
+        clip_from_view.col_mut(2)[2] = m * self.view_near_plane.z - 1.0;
+        clip_from_view.col_mut(3)[2] = m * self.view_near_plane.w;
 
         clip_from_view
     }

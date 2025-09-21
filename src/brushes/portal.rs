@@ -1,14 +1,11 @@
 use bevy::{
     asset::RenderAssetUsages,
-    math::NormedVectorSpace,
     prelude::*,
     render::{
-        camera::{CameraProjection, ViewportConversionError},
-        primitives::{Aabb, Frustum, HalfSpace},
+        primitives::Aabb,
         render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
-        view::{self, RenderLayers, VisibilitySystems},
+        view::RenderLayers,
     },
-    scene::ron::de,
     window::PrimaryWindow,
 };
 use bevy_rapier3d::plugin::RapierTransformPropagateSet;
@@ -35,19 +32,16 @@ impl Plugin for PortalPlugin {
                 PostUpdate,
                 (
                     setup_portals,
-                    (
-                        update_portal_cameras
-                            .after(RapierTransformPropagateSet)
-                            .before(TransformSystem::TransformPropagate),
-                        update_portal_camera_frusta.after(VisibilitySystems::UpdateFrusta),
-                    )
-                        .chain(),
+                    update_camera_positions
+                        .after(RapierTransformPropagateSet)
+                        .before(TransformSystem::TransformPropagate),
+                    update_camera_projections,
                 ),
             );
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct PortalCamera {
     pub source_transform: Transform,
     pub dest_transform: Transform,
@@ -88,6 +82,7 @@ pub struct PortalGeometry {
 #[derive(Component)]
 pub struct PortalSurface {
     visible: bool,
+    dest_transform: Transform,
 }
 
 #[solid_class(
@@ -177,7 +172,7 @@ pub fn setup_portals(
         let dest_portal_rotation = euler_deg_to_quat(dest_portal_geometry.normal);
         let source_transform = Transform::from_rotation(portal_rotation)
             .with_translation(source_portal_aabb.center.into());
-        let destination_transform = Transform::from_rotation(dest_portal_rotation)
+        let dest_transform = Transform::from_rotation(dest_portal_rotation)
             .with_translation(dest_portal_aabb.center.into());
         let portal_up = source_transform.up();
         let portal_right = source_transform.right();
@@ -222,12 +217,15 @@ pub fn setup_portals(
             PortalCameraChildOf(*source_portal_ent),
             PortalCamera {
                 source_transform,
-                dest_transform: destination_transform,
+                dest_transform,
             },
         ));
 
         commands.spawn((
-            PortalSurface { visible: false },
+            PortalSurface {
+                visible: false,
+                dest_transform: dest_transform,
+            },
             PortalSurfaceChildOf(*source_portal_ent),
             PortalSource(*dest_portal_ent),
             Mesh3d(meshes.add(portal_cuboid)),
@@ -271,126 +269,64 @@ pub fn update_visibility(
     }
 }
 
-pub fn update_portal_cameras(
+pub fn update_camera_positions(
     player_camera: Single<&GlobalTransform, With<WorldCameraMarker>>,
-    mut portal_cameras: Populated<
-        (&mut Transform, &PortalCamera, &mut Projection, &Camera),
-        Without<WorldCameraMarker>,
-    >,
+    mut portal_cameras: Populated<(&mut Transform, &PortalCamera), Without<WorldCameraMarker>>,
 ) -> Result {
     let player_camera_transform = player_camera.into_inner().compute_transform();
 
-    for (mut transform, portal_camera, mut projection, camera) in portal_cameras.iter_mut() {
-        transform.translation = player_camera_transform.translation
+    for (mut camera_transform, portal_camera) in portal_cameras.iter_mut() {
+        camera_transform.translation = player_camera_transform.translation
             + (portal_camera.dest_transform.translation
                 - portal_camera.source_transform.translation);
-        transform.rotation = player_camera_transform.rotation;
-        transform.rotate_around(
+        camera_transform.rotation = player_camera_transform.rotation;
+        camera_transform.rotate_around(
             portal_camera.dest_transform.translation,
             portal_camera.dest_transform.rotation
                 * portal_camera.source_transform.rotation.inverse(),
         );
-
-        let projection: &mut ObliquePerspectiveProjection = match projection.into_inner() {
-            Projection::Custom(custom_projection) => custom_projection.downcast_mut().unwrap(),
-            _ => panic!("Expected portal camera to have a custom projection."),
-        };
-
-        let clip_from_view = projection.get_clip_from_view_pre_modification();
-
-        let mut near_plane_normal = Vec3::NEG_Z;
-
-        if near_plane_normal.dot(Vec3::NEG_Z).is_sign_negative() {
-            near_plane_normal = -near_plane_normal;
-        }
-
-        let Ok(mut near_plane_translation) = world_to_view_port_with_depth(
-            camera,
-            &transform,
-            portal_camera.dest_transform.translation,
-            clip_from_view,
-        ) else {
-            continue;
-        };
-
-        // I give up.
-        near_plane_translation.z -= 1.5;
-        let near_plane_distance = -near_plane_normal.dot(near_plane_translation);
-
-        projection.view_near_plane = near_plane_normal.extend(near_plane_distance);
-
-        // The original world_to_view_port_with_depth gets the computed clip_from_view matrix
-        // from the camera which is being modified by this very function. So this performs
-        // the same task but instead uses the clip_from_view matrix from before it's modified.
-        fn world_to_view_port_with_depth(
-            camera: &Camera,
-            camera_transform: &Transform,
-            world_position: Vec3,
-            clip_from_view: Mat4,
-        ) -> Result<Vec3, ViewportConversionError> {
-            let target_rect = camera
-                .logical_viewport_rect()
-                .ok_or(ViewportConversionError::NoViewportSize)?;
-            let mut ndc_space_coords =
-                world_to_ndc(camera_transform, world_position, clip_from_view)
-                    .ok_or(ViewportConversionError::InvalidData)?;
-            if ndc_space_coords.z < 0.0 {
-                return Err(ViewportConversionError::PastNearPlane);
-            }
-            if ndc_space_coords.z > 1.0 {
-                return Err(ViewportConversionError::PastFarPlane);
-            }
-
-            let depth = -depth_ndc_to_view_z(ndc_space_coords.z, clip_from_view);
-
-            ndc_space_coords.y = -ndc_space_coords.y;
-
-            let viewport_position = (ndc_space_coords.truncate() + Vec2::ONE) / 2.0
-                * target_rect.size()
-                + target_rect.min;
-            Ok(viewport_position.extend(depth))
-        }
-
-        fn world_to_ndc(
-            camera_transform: &Transform,
-            world_position: Vec3,
-            clip_from_view: Mat4,
-        ) -> Option<Vec3> {
-            let clip_from_world: Mat4 =
-                clip_from_view * camera_transform.compute_matrix().inverse();
-            let ndc_space_coords: Vec3 = clip_from_world.project_point3(world_position);
-
-            (!ndc_space_coords.is_nan()).then_some(ndc_space_coords)
-        }
-
-        pub fn depth_ndc_to_view_z(ndc_depth: f32, clip_from_view: Mat4) -> f32 {
-            let near = clip_from_view.w_axis.z;
-            -near / ndc_depth
-        }
     }
 
     Ok(())
 }
 
-pub fn update_portal_camera_frusta(
-    mut portal_cameras: Populated<(&PortalCamera, &mut Frustum, &Transform)>,
+pub fn update_camera_projections(
+    mut portal_cameras: Populated<(&GlobalTransform, &PortalCamera, &mut Projection)>,
 ) {
-    for (portal_camera, mut frustum, transform) in portal_cameras.iter_mut() {
-        let mut near_plane_normal = portal_camera.dest_transform.forward();
+    for (camera_transform, portal_camera, projection) in portal_cameras.iter_mut() {
+        let projection: &mut ObliquePerspectiveProjection = match projection.into_inner() {
+            Projection::Custom(custom_projection) => custom_projection.downcast_mut().unwrap(),
+            _ => panic!("Expected portal camera to have a custom projection."),
+        };
 
-        if near_plane_normal
-            .dot(transform.translation - portal_camera.dest_transform.translation)
-            .is_sign_positive()
-        {
-            near_plane_normal = -near_plane_normal;
-        }
+        let world_from_view = camera_transform.compute_matrix();
+        let view_from_world = world_from_view.inverse();
+        let adj_view_from_world = view_from_world.determinant() * world_from_view;
 
-        let near_plane_distance = portal_camera
+        let sign = portal_camera
             .dest_transform
-            .translation
-            .dot(near_plane_normal.as_vec3());
+            .forward()
+            .dot(portal_camera.dest_transform.translation - camera_transform.translation())
+            .signum();
 
-        frustum.half_spaces[4] = HalfSpace::new(near_plane_normal.extend(-near_plane_distance))
+        let v_dest_translation =
+            view_from_world.transform_point3(portal_camera.dest_transform.translation);
+        let v_dest_normal = adj_view_from_world
+            .transpose()
+            .transform_vector3(portal_camera.dest_transform.forward().as_vec3())
+            .normalize()
+            * sign;
+
+        const NEAR_PLANE_OFFSET: f32 = 0.1;
+        const NEAR_CLIP_LIMIT: f32 = 0.1;
+
+        let v_plane_distance = -v_dest_translation.dot(v_dest_normal) + NEAR_PLANE_OFFSET;
+
+        if v_plane_distance.abs() > NEAR_CLIP_LIMIT {
+            projection.view_near_plane = v_dest_normal.extend(v_plane_distance);
+        } else {
+            projection.view_near_plane = Vec3::NEG_Z.extend(-projection.perspective.near);
+        }
     }
 }
 
