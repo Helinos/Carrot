@@ -1,5 +1,8 @@
+use std::default;
+
 use bevy::prelude::*;
 use bevy_trenchbroom::prelude::*;
+use nil::prelude::SmartDefault;
 
 pub struct DoorPlugin;
 
@@ -16,4 +19,12 @@ pub struct DoorOpeningMarker;
 pub struct DoorClosingMarker;
 
 #[solid_class(classname("func_sliding_door"))]
-pub struct SlidingDoorClass;
+#[derive(Clone, SmartDefault)]
+pub struct SlidingDoorClass {
+    // #[class(must_set)]
+    // #[default(vec3(0., 0., 0.))]
+    // direction: Vec3,
+    // #[class(must_set)]
+    // #[default(0.0)]
+    // distance: f32,
+}

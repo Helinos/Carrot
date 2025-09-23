@@ -20,19 +20,19 @@ codegen-units = 1
 lto = "thin"
 
 [dependencies]
-bevy = { version = "0.16", features = ["exr"] }
+bevy = { version = "0.16.1", features = ["exr", "wayland"] }
 nestify = "0.3.3"
-bevy-panic-handler = "5.0"
+bevy-panic-handler = "5.0.0"
 bevy_trenchbroom = { git = "https://github.com/Noxmore/bevy_trenchbroom.git", default-features = true, features = [
     "rapier",
     "bsp",
 ] }
-bevy-inspector-egui = "0.33"
-bevy_framepace = "0.19"
+bevy-inspector-egui = "0.33.1"
+bevy_framepace = "0.19.1"
 nil = "0.15.0"
-bevy_rapier3d = { version = "0.31", features = [
+bevy_rapier3d = { version = "0.31.0", features = [
     "simd-nightly",
     "parallel",
     "debug-render-3d",
 ] }
-bevy_mesh = "0.16"
+bevy_mesh = "0.16.1"

@@ -190,7 +190,7 @@ pub struct PlayerVelocity(pub Vec3);
 pub struct PlayerControllerMarker;
 
 #[derive(Component)]
-pub struct WorldCameraMarker;
+pub struct PlayerWorldCameraMarker;
 
 #[derive(Component)]
 pub struct PlayerSpawnedMarker;
@@ -220,7 +220,7 @@ fn spawn_player(
         .insert(PlayerSpawnedMarker)
         .insert(ActiveCollisionTypes::default() | ActiveCollisionTypes::KINEMATIC_STATIC)
         .with_child((
-            WorldCameraMarker,
+            PlayerWorldCameraMarker,
             // Camera should render after portal cameras, otherwise portals will be a frame behind
             Camera {
                 order: 1,
@@ -300,7 +300,7 @@ pub fn mouse_input(
 
 pub fn look(
     player: Single<&mut Transform, (With<PlayerControllerMarker>, Without<Camera3d>)>,
-    player_camera: Single<&mut Transform, (With<Camera3d>, With<WorldCameraMarker>)>,
+    player_camera: Single<&mut Transform, (With<Camera3d>, With<PlayerWorldCameraMarker>)>,
     mut movement_event_reader: EventReader<MovementAction>,
 ) {
     let mut player_transform = player.into_inner();

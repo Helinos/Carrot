@@ -24,7 +24,7 @@ use nil::prelude::SmartDefault;
 
 use crate::{
     PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
-    player::{PlayerVelocity, WorldCameraMarker},
+    player::{PlayerVelocity, PlayerWorldCameraMarker},
     projections::ObliquePerspectiveProjection,
     special_materials::PortalMaterial,
 };
@@ -35,8 +35,7 @@ impl Plugin for PortalPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<PortalClass>()
             .register_type::<PortalGeometry>()
-            .add_systems(PreUpdate, update_visibility)
-            //.add_systems(Update, )
+            .add_systems(PreUpdate, (update_visibility, update_camera_size))
             .add_systems(
                 PostUpdate,
                 (
@@ -161,7 +160,7 @@ pub fn setup_portals(
     mut materials: ResMut<Assets<PortalMaterial>>,
     portals: Populated<(Entity, &PortalGeometry, &Aabb), Without<PortalSurfaceChildren>>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    player_camera: Single<&Projection, With<WorldCameraMarker>>,
+    player_camera: Single<&Projection, With<PlayerWorldCameraMarker>>,
 ) -> Result {
     let window = windows.single()?;
     let player_camera_projection = player_camera.into_inner();
@@ -286,6 +285,36 @@ pub fn setup_portals(
     Ok(())
 }
 
+pub fn update_camera_size(
+    player_camera: Single<&Camera, (Changed<Camera>, With<PlayerWorldCameraMarker>)>,
+    mut materials: ResMut<Assets<PortalMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) -> Result {
+    info!("Firing.");
+
+    let player_camera = player_camera.into_inner();
+
+    for (_, material) in materials.iter_mut() {
+        let portal_image = &mut material.texture_handle;
+        let Some(image) = images.get_mut(portal_image) else {
+            continue;
+        };
+        let Some(viewport) = player_camera.physical_viewport_size() else {
+            continue;
+        };
+
+        let size = Extent3d {
+            width: viewport.x,
+            height: viewport.y,
+            ..Extent3d::default()
+        };
+
+        image.texture_descriptor.size = size;
+    }
+
+    Ok(())
+}
+
 pub fn update_visibility(
     mut portals: Populated<(Entity, &mut PortalSurface, &ViewVisibility)>,
     mut portal_cameras: Populated<(Entity, &mut Camera), With<PortalCameraChildOf>>,
@@ -293,7 +322,7 @@ pub fn update_visibility(
 ) {
     for (camera_ent, mut camera) in portal_cameras.iter_mut() {
         for related in camera_relationships.iter_ancestors(camera_ent) {
-            let Ok((_portal_ent, mut portal, view_visibility)) = portals.get_mut(related) else {
+            let Ok((_, mut portal, view_visibility)) = portals.get_mut(related) else {
                 continue;
             };
 
@@ -307,8 +336,11 @@ pub fn update_visibility(
 }
 
 pub fn update_camera_positions(
-    player_camera: Single<&GlobalTransform, With<WorldCameraMarker>>,
-    mut portal_cameras: Populated<(&mut Transform, &PortalCamera), Without<WorldCameraMarker>>,
+    player_camera: Single<&GlobalTransform, With<PlayerWorldCameraMarker>>,
+    mut portal_cameras: Populated<
+        (&mut Transform, &PortalCamera),
+        Without<PlayerWorldCameraMarker>,
+    >,
 ) -> Result {
     let player_camera_transform = player_camera.into_inner().compute_transform();
 
