@@ -11,7 +11,10 @@ use bevy::{
     },
     window::PrimaryWindow,
 };
-use bevy_rapier3d::plugin::RapierTransformPropagateSet;
+use bevy_rapier3d::{
+    plugin::{RapierTransformPropagateSet, systems::update_character_controls},
+    prelude::{Collider, ReadRapierContext, RigidBody, Sensor},
+};
 use bevy_trenchbroom::{
     anyhow::{self, anyhow},
     class::QuakeClassSpawnView,
@@ -20,8 +23,10 @@ use bevy_trenchbroom::{
 use nil::prelude::SmartDefault;
 
 use crate::{
-    PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2, player::WorldCameraMarker,
-    projections::ObliquePerspectiveProjection, special_materials::PortalMaterial,
+    PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2,
+    player::{PlayerVelocity, WorldCameraMarker},
+    projections::ObliquePerspectiveProjection,
+    special_materials::PortalMaterial,
 };
 
 pub struct PortalPlugin;
@@ -31,14 +36,18 @@ impl Plugin for PortalPlugin {
         app.register_type::<PortalClass>()
             .register_type::<PortalGeometry>()
             .add_systems(PreUpdate, update_visibility)
+            //.add_systems(Update, )
             .add_systems(
                 PostUpdate,
                 (
                     setup_portals,
-                    update_camera_positions
+                    portal_teleport
+                        .after(update_character_controls)
+                        .before(RapierTransformPropagateSet),
+                    (update_camera_positions, update_camera_projections)
                         .after(RapierTransformPropagateSet)
-                        .before(TransformSystem::TransformPropagate),
-                    update_camera_projections.after(TransformSystem::TransformPropagate),
+                        .before(TransformSystem::TransformPropagate)
+                        .chain(),
                 ),
             );
 
@@ -98,6 +107,9 @@ pub struct PortalSurface {
     visible: bool,
     dest_transform: Transform,
 }
+
+#[derive(Component)]
+pub struct OldTranslation(Vec3);
 
 #[solid_class(
     hooks(SpawnHooks::new().push(Self::spawn_hook)),
@@ -159,9 +171,6 @@ pub fn setup_portals(
         height: window.physical_height(),
         ..default()
     };
-
-    println!("Hey");
-    info!("Hey");
 
     let mut setup_portal = |source_portal: &(Entity, &PortalGeometry, &Aabb),
                             dest_portal: &(Entity, &PortalGeometry, &Aabb),
@@ -257,6 +266,8 @@ pub fn setup_portals(
             Mesh3d(meshes.add(portal_cuboid)),
             MeshMaterial3d(portal_material_handle),
             RenderLayers::layer(portal_render_layer),
+            Collider::cuboid(portal_width, portal_height, near_plane_diagonal_radius),
+            Sensor,
             source_transform,
         ));
     };
@@ -317,7 +328,7 @@ pub fn update_camera_positions(
 }
 
 pub fn update_camera_projections(
-    mut portal_cameras: Populated<(&GlobalTransform, &PortalCamera, &mut Projection)>,
+    mut portal_cameras: Populated<(&Transform, &PortalCamera, &mut Projection)>,
 ) {
     for (camera_transform, portal_camera, projection) in portal_cameras.iter_mut() {
         let projection: &mut ObliquePerspectiveProjection = match projection.into_inner() {
@@ -332,7 +343,7 @@ pub fn update_camera_projections(
         let sign = portal_camera
             .dest_transform
             .forward()
-            .dot(portal_camera.dest_transform.translation - camera_transform.translation())
+            .dot(portal_camera.dest_transform.translation - camera_transform.translation)
             .signum();
 
         let v_dest_translation =
@@ -340,7 +351,6 @@ pub fn update_camera_projections(
         let v_dest_normal = adj_view_from_world
             .transpose()
             .transform_vector3(portal_camera.dest_transform.forward().as_vec3())
-            .normalize()
             * sign;
 
         // There is a very small seam between the portal and the near plane that is seemingly exagerated at higher viewing angles.
@@ -373,4 +383,68 @@ pub fn replace_extracted_projection(projections: Query<(&Projection, &mut Extrac
     for (projection, mut view) in projections {
         view.clip_from_view = projection.get_clip_from_view();
     }
+}
+
+pub fn portal_teleport(
+    rapier_context: ReadRapierContext,
+    mut commands: Commands,
+    portals: Populated<(Entity, &PortalSurface, &GlobalTransform)>,
+    mut rigid_bodies: Query<
+        (
+            Entity,
+            &mut Transform,
+            Option<&OldTranslation>,
+            Option<&mut PlayerVelocity>,
+        ),
+        (With<RigidBody>, Without<PortalSurface>, Changed<Transform>),
+    >,
+) -> Result {
+    for (body_ent, mut body_transform, old_translation, player_velocity) in rigid_bodies.iter_mut()
+    {
+        if let Some(old_translation) = old_translation {
+            'each_portal: for (portal_ent, portal_surface, portal_transform) in portals.iter() {
+                if rapier_context
+                    .single()?
+                    .intersection_pair(portal_ent, body_ent)
+                    != Some(true)
+                {
+                    continue 'each_portal;
+                }
+
+                let world_from_portal = portal_transform.compute_matrix();
+                let portal_from_world = world_from_portal.inverse();
+                let world_from_dest_portal = portal_surface.dest_transform.compute_matrix();
+
+                let relative_to_portal =
+                    portal_from_world.project_point3(body_transform.translation);
+                let old_relative_to_portal = portal_from_world.project_point3(old_translation.0);
+
+                let dot_sign = Vec3::NEG_Z.dot(relative_to_portal).signum();
+                let old_dot_sign = Vec3::NEG_Z.dot(old_relative_to_portal).signum();
+
+                if dot_sign != old_dot_sign {
+                    body_transform.translation = world_from_dest_portal.project_point3(
+                        portal_from_world.project_point3(body_transform.translation),
+                    );
+
+                    let rotational_offset = portal_transform.rotation().inverse()
+                        * portal_surface.dest_transform.rotation;
+
+                    body_transform.rotation *= rotational_offset;
+
+                    if let Some(mut player_velocity) = player_velocity {
+                        player_velocity.0 = rotational_offset.mul_vec3(player_velocity.0);
+                    }
+                }
+
+                break 'each_portal;
+            }
+        }
+
+        commands
+            .entity(body_ent)
+            .insert(OldTranslation(body_transform.translation));
+    }
+
+    Ok(())
 }

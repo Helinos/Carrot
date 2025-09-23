@@ -30,7 +30,6 @@ fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(1.0, 0.0, 1.0)))
         .insert_resource(AmbientLight::NONE)
-        //.insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins((
             DefaultPlugins,
             SpecialMaterialsPlugin,
@@ -62,6 +61,7 @@ fn main() {
             WorldInspectorPlugin::new(),
             FramepacePlugin,
             BrushPlugin,
+            //RapierDebugRenderPlugin::default(),
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, grab_cursor)

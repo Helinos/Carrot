@@ -77,7 +77,7 @@ nest! {
             Relative(Vec2),
         },
         pub controller_sensitivity: CameraSensitivity,
-        pub camera_height: f32,
+        camera_height_offset: f32,
     }
 }
 
@@ -149,7 +149,7 @@ impl Default for ControllerAimAcceleration {
 }
 
 #[derive(Component, Default)]
-pub struct PlayerVelocity(Vec3);
+pub struct PlayerVelocity(pub Vec3);
 
 #[derive(Component, Default)]
 #[require(
@@ -158,7 +158,7 @@ pub struct PlayerVelocity(Vec3);
         allow_movement: false,
         mouse_sensitivity: CameraSensitivity::Linear(0.0015),
         controller_sensitivity: CameraSensitivity::Linear(0.005),
-        camera_height: 1.79,
+        camera_height_offset: 0.79,
     },
     MovementSettings {
         walking_speed: 7.0,
@@ -182,9 +182,9 @@ pub struct PlayerVelocity(Vec3);
             min_width: CharacterLength::Absolute(0.25),
             include_dynamic_bodies: true,
         }),
-        custom_shape: Some((Collider::cuboid(0.25, 1.0, 0.25), Vec3::new(0.0, 1.0, 0.0), Quat::default())),
         ..default()
     },
+    Collider::cylinder(1.0, 0.5),
     GravityScale(1.5),
 )]
 pub struct PlayerControllerMarker;
@@ -211,11 +211,14 @@ fn spawn_player(
         return Ok(());
     };
 
-    *player_transform = **player_start_transform;
+    let mut t = **player_start_transform;
+    t.translation.y += 1.0; // Half player height
+    *player_transform = t;
 
     commands
         .entity(entity)
         .insert(PlayerSpawnedMarker)
+        .insert(ActiveCollisionTypes::default() | ActiveCollisionTypes::KINEMATIC_STATIC)
         .with_child((
             WorldCameraMarker,
             // Camera should render after portal cameras, otherwise portals will be a frame behind
@@ -229,7 +232,7 @@ fn spawn_player(
                 near: 0.00001,
                 ..default()
             }),
-            Transform::from_xyz(0.0, camera_settings.camera_height, 0.0),
+            Transform::from_xyz(0.0, camera_settings.camera_height_offset, 0.0),
             RenderLayers::from_layers(&[
                 DEFAULT_RENDER_LAYER,
                 PORTAL_RENDER_LAYER_1,
@@ -313,7 +316,7 @@ pub fn look(
                     (camera_pitch + delta.y).clamp(-PITCH_LIMIT, PITCH_LIMIT) - camera_pitch;
 
                 player_transform.rotate_y(delta.x);
-                camera_transform.rotate_x(clamped_delta_pitch);
+                camera_transform.rotate_local_x(clamped_delta_pitch);
             }
             _ => (),
         }

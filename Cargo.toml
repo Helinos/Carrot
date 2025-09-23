@@ -30,5 +30,9 @@ bevy_trenchbroom = { git = "https://github.com/Noxmore/bevy_trenchbroom.git", de
 bevy-inspector-egui = "0.33"
 bevy_framepace = "0.19"
 nil = "0.15.0"
-bevy_rapier3d = { version = "0.31" }
+bevy_rapier3d = { version = "0.31", features = [
+    "simd-nightly",
+    "parallel",
+    "debug-render-3d",
+] }
 bevy_mesh = "0.16"

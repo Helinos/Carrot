@@ -1015,7 +1015,7 @@ dependencies = [
  "approx",
  "bevy_reflect",
  "derive_more 1.0.0",
- "glam",
+ "glam 0.29.3",
  "itertools 0.14.0",
  "libm",
  "rand",
@@ -1057,7 +1057,7 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bb60c753b968a2de0fd279b76a3d19517695e771edb4c23575c7f92156315de"
 dependencies = [
- "glam",
+ "glam 0.29.3",
 ]
 
 [[package]]
@@ -1172,7 +1172,7 @@ dependencies = [
  "downcast-rs 2.0.2",
  "erased-serde",
  "foldhash",
- "glam",
+ "glam 0.29.3",
  "petgraph 0.7.1",
  "serde",
  "smallvec",
@@ -2395,7 +2395,7 @@ checksum = "b0a05902cf601ed11d564128448097b98ebe3c6574bd7b6a653a3d56d54aa020"
 dependencies = [
  "const_panic",
  "encase_derive",
- "glam",
+ "glam 0.29.3",
  "thiserror 1.0.69",
 ]
 
@@ -2830,6 +2830,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.30.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34e4649b62c21fb8c737abe6449192ce96ecd16b5c0d606759fe43831b31bd95"
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3037,7 +3043,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c9e718d32b6e6b2b32354e1b0367025efdd0b11d6a740b905ddf5db1074679"
 dependencies = [
  "constgebra",
- "glam",
+ "glam 0.29.3",
  "tinyvec",
 ]
 
@@ -3482,7 +3488,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26aecdf64b707efd1310e3544d709c5c0ac61c13756046aaaba41be5c4f66a3b"
 dependencies = [
  "approx",
- "glam",
+ "glam 0.29.3",
  "matrixmultiply",
  "nalgebra-macros",
  "num-complex",
@@ -4259,6 +4265,7 @@ dependencies = [
  "downcast-rs 2.0.2",
  "either",
  "ena",
+ "glam 0.30.7",
  "hashbrown",
  "log",
  "nalgebra",
@@ -4523,7 +4530,7 @@ checksum = "379e44355c62bc20805f6ecbdbc811053d17e1a9de0c00c83b3a4de40fbe6964"
 dependencies = [
  "bevy_reflect",
  "derive_more 2.0.1",
- "glam",
+ "glam 0.29.3",
  "image",
  "qbsp_macros",
  "serde",
@@ -4657,6 +4664,7 @@ dependencies = [
  "parry3d",
  "petgraph 0.8.2",
  "profiling",
+ "rayon",
  "rustc-hash 2.1.1",
  "simba",
  "smallvec",
@@ -4676,6 +4684,16 @@ name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
+
+[[package]]
+name = "rayon"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
+dependencies = [
+ "either",
+ "rayon-core",
+]
 
 [[package]]
 name = "rayon-core"
