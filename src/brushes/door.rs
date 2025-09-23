@@ -4,6 +4,8 @@ use bevy::prelude::*;
 use bevy_trenchbroom::prelude::*;
 use nil::prelude::SmartDefault;
 
+use crate::interaction::QuickInteractableMarker;
+
 pub struct DoorPlugin;
 
 impl Plugin for DoorPlugin {
@@ -19,6 +21,7 @@ pub struct DoorOpeningMarker;
 pub struct DoorClosingMarker;
 
 #[solid_class(classname("func_sliding_door"))]
+#[require(QuickInteractableMarker)]
 #[derive(Clone, SmartDefault)]
 pub struct SlidingDoorClass {
     // #[class(must_set)]

@@ -1,6 +1,9 @@
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*, render::view::RenderLayers};
+use bevy::{
+    core_pipeline::auto_exposure::AutoExposure, input::mouse::AccumulatedMouseMotion, prelude::*,
+    render::view::RenderLayers,
+};
 use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::class::builtin::InfoPlayerStart;
 use nestify::nest;
@@ -221,12 +224,14 @@ fn spawn_player(
         .insert(ActiveCollisionTypes::default() | ActiveCollisionTypes::KINEMATIC_STATIC)
         .with_child((
             PlayerWorldCameraMarker,
-            // Camera should render after portal cameras, otherwise portals will be a frame behind
             Camera {
-                order: 1,
+                order: 1, // Camera should render after portal cameras, otherwise portals will be a frame behind
+                clear_color: ClearColorConfig::None,
+                hdr: true,
                 ..default()
             },
             Camera3d::default(),
+            AutoExposure::default(),
             Projection::Perspective(PerspectiveProjection {
                 fov: fov.into_inner().into(),
                 near: 0.00001,

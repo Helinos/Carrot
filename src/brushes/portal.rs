@@ -1,13 +1,14 @@
 use bevy::{
     asset::RenderAssetUsages,
+    core_pipeline::tonemapping::Tonemapping,
     prelude::*,
     render::{
         Extract, Render, RenderApp, RenderSet,
         camera::{CameraProjection, extract_cameras},
         primitives::Aabb,
-        render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
+        render_resource::{Extent3d, TextureDimension, TextureUsages},
         sync_world::RenderEntity,
-        view::{ExtractedView, RenderLayers},
+        view::{ExtractedView, RenderLayers, ViewTarget},
     },
     window::PrimaryWindow,
 };
@@ -35,7 +36,7 @@ impl Plugin for PortalPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<PortalClass>()
             .register_type::<PortalGeometry>()
-            .add_systems(PreUpdate, (update_visibility, update_camera_size))
+            .add_systems(PreUpdate, (update_visibility, update_portal_size))
             .add_systems(
                 PostUpdate,
                 (
@@ -180,7 +181,7 @@ pub fn setup_portals(
         let mut texture = Image::new_uninit(
             size,
             TextureDimension::D2,
-            TextureFormat::Rgba8UnormSrgb,
+            ViewTarget::TEXTURE_FORMAT_HDR,
             RenderAssetUsages::default(),
         );
 
@@ -225,7 +226,7 @@ pub fn setup_portals(
             _ => panic!("Expected player to have a perspective projection."),
         };
 
-        let near_plane_half_height = near * (fov * 0.5).to_radians().tan();
+        let near_plane_half_height = near * (fov / 2.0).to_radians().tan();
         let near_plane_half_width = near_plane_half_height * aspect_ratio;
         let near_plane_diagonal_radius =
             Vec3::new(near_plane_half_width, near_plane_half_height, near).length();
@@ -241,8 +242,13 @@ pub fn setup_portals(
         commands.spawn((
             Camera {
                 target: texture_handle.into(),
+                clear_color: ClearColorConfig::None,
+                hdr: true,
                 ..default()
             },
+            // Tonemapping is applied by the world model camera.
+            // If it isn't disabled here then it will be applied twice, to horrible effect.
+            Tonemapping::None,
             Camera3d::default(),
             Projection::custom(ObliquePerspectiveProjection {
                 perspective: PerspectiveProjection { fov, ..default() },
@@ -285,13 +291,11 @@ pub fn setup_portals(
     Ok(())
 }
 
-pub fn update_camera_size(
+pub fn update_portal_size(
     player_camera: Single<&Camera, (Changed<Camera>, With<PlayerWorldCameraMarker>)>,
     mut materials: ResMut<Assets<PortalMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) -> Result {
-    info!("Firing.");
-
     let player_camera = player_camera.into_inner();
 
     for (_, material) in materials.iter_mut() {

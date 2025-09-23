@@ -50,8 +50,8 @@ fn setup_new_brushes(
 
 #[derive(Asset, AsBindGroup, Reflect, Clone, Default)]
 pub struct SkyMaterial {
-    #[texture(1)]
-    #[sampler(2)]
+    #[texture(0)]
+    #[sampler(1)]
     pub texture: Handle<Image>,
 }
 
@@ -67,8 +67,8 @@ impl Material for SkyMaterial {
 
 #[derive(Asset, AsBindGroup, Reflect, Clone, Default)]
 pub struct PortalMaterial {
-    #[texture(1)]
-    #[sampler(2)]
+    #[texture(0)]
+    #[sampler(1)]
     pub texture_handle: Handle<Image>,
 }
 
@@ -87,9 +87,9 @@ impl Material for PortalMaterial {
         _layout: &bevy_mesh::MeshVertexBufferLayoutRef,
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-        //descriptor.primitive.cull_mode = None;
+        descriptor.primitive.cull_mode = None;
 
-        // Prevent Z-fighting inside faces of a portal brush.
+        // Prevent Z-fighting on the inside faces of a portal brush.
         if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
             depth_stencil.bias.constant = 48;
         }

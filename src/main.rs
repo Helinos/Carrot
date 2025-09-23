@@ -14,6 +14,7 @@ use nil::ShortToString;
 
 use crate::{
     brushes::BrushPlugin,
+    interaction::CarrotInteractionPlugin,
     player::{
         CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerControllerMarker,
         PlayerPlugin,
@@ -22,9 +23,15 @@ use crate::{
 };
 
 mod brushes;
+mod interaction;
 mod player;
 mod projections;
 mod special_materials;
+
+const DEFAULT_RENDER_LAYER: usize = 0;
+const _VIEW_MODEL_RENDER_LAYER: usize = 1;
+const PORTAL_RENDER_LAYER_1: usize = 2;
+const PORTAL_RENDER_LAYER_2: usize = 3;
 
 fn main() {
     App::new()
@@ -61,17 +68,13 @@ fn main() {
             WorldInspectorPlugin::new(),
             FramepacePlugin,
             BrushPlugin,
+            CarrotInteractionPlugin,
             //RapierDebugRenderPlugin::default(),
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, grab_cursor)
         .run();
 }
-
-const DEFAULT_RENDER_LAYER: usize = 0;
-const _VIEW_MODEL_RENDER_LAYER: usize = 1;
-const PORTAL_RENDER_LAYER_1: usize = 2;
-const PORTAL_RENDER_LAYER_2: usize = 3;
 
 fn setup(
     mut commands: Commands,
