@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::brushes::{door::DoorPlugin, portal::PortalPlugin};
+use crate::class::brush::{door::DoorPlugin, portal::PortalPlugin};
 
 pub mod door;
 pub mod portal;

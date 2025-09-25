@@ -13,8 +13,7 @@ use bevy_trenchbroom::{
 use nil::ShortToString;
 
 use crate::{
-    brushes::BrushPlugin,
-    interaction::CarrotInteractionPlugin,
+    class::CarrotClassPlugin,
     player::{
         CameraSettings, ControllerAimAcceleration, JumpSettings, PlayerControllerMarker,
         PlayerPlugin,
@@ -22,8 +21,7 @@ use crate::{
     special_materials::SpecialMaterialsPlugin,
 };
 
-mod brushes;
-mod interaction;
+mod class;
 mod player;
 mod projections;
 mod special_materials;
@@ -52,23 +50,22 @@ fn main() {
                         ..default()
                     })
                     .texture_extensions(vec![
-                        "bmp".s(),
-                        "exr".s(),
-                        "hdr".s(),
-                        "jpeg".s(),
-                        "jpg".s(),
+                        //"bmp".s(),
+                        //"exr".s(),
+                        //"hdr".s(),
+                        //"jpeg".s(),
+                        //"jpg".s(),
                         "png".s(),
-                        "tga".s(),
-                        "webp".s(),
+                        //"tga".s(),
+                        //"webp".s(),
                         "D".s(),
-                        "C".s(),
+                        //"C".s(),
                     ]),
             ),
             EguiPlugin::default(),
             WorldInspectorPlugin::new(),
             FramepacePlugin,
-            BrushPlugin,
-            CarrotInteractionPlugin,
+            CarrotClassPlugin,
             //RapierDebugRenderPlugin::default(),
         ))
         .add_systems(Startup, setup)
