@@ -1,9 +1,9 @@
 use bevy::{
     prelude::*,
+    remote::{RemotePlugin, http::RemoteHttpPlugin},
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
-use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::{
     TrenchBroomPlugins,
@@ -62,10 +62,10 @@ fn main() {
                         //"C".s(),
                     ]),
             ),
-            EguiPlugin::default(),
-            WorldInspectorPlugin::new(),
             FramepacePlugin,
             CarrotClassPlugin,
+            RemotePlugin::default(),
+            RemoteHttpPlugin::default(),
             //RapierDebugRenderPlugin::default(),
         ))
         .add_systems(Startup, setup)

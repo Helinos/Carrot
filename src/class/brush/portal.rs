@@ -1,12 +1,13 @@
+use std::u32;
+
 use bevy::{
     asset::RenderAssetUsages,
     core_pipeline::tonemapping::Tonemapping,
-    math::DVec3,
     prelude::*,
     render::{
         Extract, Render, RenderApp, RenderSet,
         camera::{CameraProjection, extract_cameras},
-        primitives::Aabb,
+        mesh::{Indices, PrimitiveTopology},
         render_resource::{Extent3d, TextureDimension, TextureUsages},
         sync_world::RenderEntity,
         view::{ExtractedView, RenderLayers, ViewTarget},
@@ -18,16 +19,20 @@ use bevy_rapier3d::{
     prelude::{Collider, ReadRapierContext, RigidBody, Sensor},
 };
 use bevy_trenchbroom::{
-    anyhow::{self},
-    brush::ConvexHull,
-    class::QuakeClassSpawnView,
+    anyhow::anyhow,
+    brush::{BrushPlane, ConvexHull},
+    bsp::{BspBrush, BspBrushesAsset},
+    geometry::Brushes,
     prelude::*,
 };
+use itertools::Itertools;
+use nil::ShortToString;
+use try_partialord::TrySort;
 
 use crate::{
     PORTAL_RENDER_LAYER_1,
     class::{TargetedBy, Targeting},
-    player::{PlayerVelocity, PlayerWorldCameraMarker},
+    player::{FOV, PlayerVelocity, PlayerWorldCameraMarker},
     projections::ObliquePerspectiveProjection,
     special_materials::PortalMaterial,
 };
@@ -37,7 +42,6 @@ pub struct PortalPlugin;
 impl Plugin for PortalPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<PortalClass>()
-            .register_type::<PortalSurface>()
             .add_systems(PreUpdate, (update_visibility, update_portal_texture_size))
             .add_systems(
                 PostUpdate,
@@ -75,70 +79,40 @@ pub struct PortalCameraChildOf(pub Entity);
 #[relationship_target(relationship = PortalCameraChildOf, linked_spawn)]
 pub struct PortalCameraChild(Entity);
 
-#[derive(Component, Reflect)]
-#[reflect(Component)]
-#[component(immutable)]
-pub struct PortalSurface {
-    pub height: f32,
-    pub width: f32,
-}
-
 #[derive(Component)]
 pub struct OldTranslation(Vec3);
 
 #[solid_class(
-    base(
-        Transform,
-        Target,
-        Targetable,
-    ),
-    hooks(SpawnHooks::new().push(Self::spawn_hook)),
+    base(Transform, Target, Targetable,),
+    hooks(SpawnHooks::new()),
     classname("func_world_portal")
 )]
 pub struct PortalClass;
 
-impl PortalClass {
-    pub fn spawn_hook(view: &mut QuakeClassSpawnView) -> anyhow::Result<()> {
-        let src_entity = view.src_entity;
-        let brushes = &src_entity.brushes;
-        let target_name: String = src_entity.get("targetname")?;
+struct VertexWithPlaneIndices {
+    index_1: usize,
+    index_2: usize,
+    vertex: Vec3,
+}
 
-        if brushes.len() > 1 {
-            warn!(
-                "Portal with targetname \"{}\", has more than one brush. This is undefined behavior.",
-                target_name
-            );
+impl VertexWithPlaneIndices {
+    fn new(index_1: usize, index_2: usize, vertex: Vec3) -> Self {
+        Self {
+            index_1,
+            index_2,
+            vertex,
         }
+    }
 
-        let (portal_min, portal_max): (DVec3, DVec3) = brushes
-            .get(0)
-            .unwrap()
-            .as_cuboid()
-            .ok_or(format!(
-                "Portal with targetname \"{}\", is not a cuboid when it must be.",
-                target_name
-            ))
-            .unwrap();
+    fn indices(&self) -> [usize; 2] {
+        [self.index_1, self.index_2]
+    }
+}
 
-        let aabb = Aabb::from_min_max(portal_min.as_vec3(), portal_max.as_vec3());
-
-        let mut portal_ent = view.world.entity_mut(view.entity);
-        let mut portal_transform = portal_ent.get_mut::<Transform>().unwrap();
-
-        let portal_height =
-            aabb.relative_radius(&portal_transform.up().as_vec3().into(), &Mat3A::IDENTITY);
-        let portal_width =
-            aabb.relative_radius(&portal_transform.right().as_vec3().into(), &Mat3A::IDENTITY);
-
-        let portal_center = (0.5 * (portal_min + portal_max)).as_vec3();
-
-        portal_transform.translation = portal_center;
-        portal_ent.insert(PortalSurface {
-            height: portal_height,
-            width: portal_width,
-        });
-
-        Ok(())
+impl PartialEq for VertexWithPlaneIndices {
+    fn eq(&self, other: &Self) -> bool {
+        (self.index_1 == other.index_1 && self.index_2 == other.index_2)
+            || (self.index_1 == other.index_2 && self.index_2 == other.index_1)
     }
 }
 
@@ -147,12 +121,26 @@ pub fn setup_portals(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<PortalMaterial>>,
-    portals: Populated<(Entity, &PortalSurface), Without<PortalCameraChild>>,
+    fov: Res<FOV>,
+    bsp_brush_assets: Res<Assets<BspBrushesAsset>>,
+    mut portals: Populated<
+        (
+            Entity,
+            &Targetable,
+            Option<&Brushes>,
+            &mut Transform,
+            &Children,
+        ),
+        (
+            Without<PortalCameraChild>,
+            With<PortalClass>,
+            With<Children>,
+        ),
+    >,
     windows: Query<&Window, With<PrimaryWindow>>,
-    player_camera: Single<&Projection, With<PlayerWorldCameraMarker>>,
 ) -> Result {
     let window = windows.single()?;
-    let player_camera_projection = player_camera.into_inner();
+    let fov = fov.into_inner();
 
     let size = Extent3d {
         width: window.physical_width(),
@@ -160,7 +148,147 @@ pub fn setup_portals(
         ..default()
     };
 
-    for (portal_ent, portal_surface) in portals.iter() {
+    for (portal_ent, targetable, portal_brushes, mut portal_transform, portal_children) in
+        portals.iter_mut()
+    {
+        let portal_name = format!(
+            "{} with targetname `{}`",
+            portal_ent,
+            targetable
+                .targetname
+                .clone()
+                .unwrap_or("[NO targetname]".s()),
+        );
+
+        let Some(portal_brushes) = portal_brushes else {
+            error!("Portal {} has no brushes!", portal_name);
+            commands.entity(portal_ent).remove::<PortalClass>();
+            continue;
+        };
+
+        let portal_brush: &BspBrush = match portal_brushes {
+            Brushes::Bsp(handle) => {
+                let bsp_brushes_asset = bsp_brush_assets.get(handle).ok_or(anyhow!(
+                    "Unable to get bsp brushes for portal {}.",
+                    portal_name
+                ))?;
+
+                let brushes = &bsp_brushes_asset.brushes;
+
+                if brushes.len() == 0 {
+                    return Err(anyhow!(
+                        "Portal {} has 0 brushes when it should have 1.",
+                        portal_name,
+                    )
+                    .into());
+                } else if brushes.len() > 1 {
+                    error!(
+                        "Portal {} has {} brushes when it should only have 1. This is undefined behavior.",
+                        portal_name,
+                        brushes.len(),
+                    )
+                }
+
+                &brushes[0]
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Expected portal {}'s brushes to be in BSP format, but they weren't.",
+                    portal_name
+                )
+                .into());
+            }
+        };
+
+        // Remove all of this portal's brushes.
+        for child in portal_children {
+            commands.entity(*child).despawn();
+        }
+        let portal_center = portal_brush.center().as_vec3();
+
+        // Get a every point where the portal's plane intersects with the portal's brush.
+        let mut vertices_with_indices: Vec<VertexWithPlaneIndices> = Vec::new();
+        let mut smallest_index = usize::MAX;
+        let portal_plane = BrushPlane {
+            normal: portal_transform.forward().as_dvec3(),
+            distance: portal_transform
+                .forward()
+                .dot(portal_transform.translation - portal_center) as f64,
+        };
+        // Do this after getting the portal plane or else the portal plane will be wrong.
+        portal_transform.translation = portal_center;
+        for combination in portal_brush.planes().enumerate().combinations(2) {
+            let (plane_1_index, plane_1) = combination[0];
+            let (plane_2_index, plane_2) = combination[1];
+
+            let Some(vertex) =
+                BrushPlane::calculate_intersection_point([&portal_plane, plane_1, plane_2])
+            else {
+                continue;
+            };
+
+            if !portal_brush.contains_point(vertex) {
+                info!("Filtered out point {}", vertex);
+                continue;
+            }
+
+            let element =
+                VertexWithPlaneIndices::new(plane_1_index, plane_2_index, vertex.as_vec3());
+
+            if !vertices_with_indices.contains(&element) {
+                vertices_with_indices.push(element);
+                smallest_index = smallest_index.min(plane_1_index.min(plane_2_index));
+            };
+        }
+
+        // PartialOrd sort based on which vertices share planes with one another.
+        vertices_with_indices.try_sort_by(|a, b| {
+            let mut common_index = None;
+
+            for index in a.indices() {
+                if b.indices().contains(&index) {
+                    if common_index.is_some() {
+                        // Then both indices are the same
+                        return Some(false);
+                    }
+
+                    common_index = Some(index);
+                }
+            }
+
+            let common_index = common_index?;
+            let all_indices = [a.indices(), b.indices()].concat();
+            let uncommon_indices = all_indices
+                .iter()
+                .filter(|i| **i != common_index)
+                .collect_vec();
+
+            if common_index == smallest_index {
+                return Some(uncommon_indices[0] > uncommon_indices[1]);
+            }
+
+            Some(uncommon_indices[0] < uncommon_indices[1])
+        })?;
+
+        let world_from_portal = portal_transform.compute_matrix().inverse();
+
+        let mut indices = Vec::new();
+        let vertices = vertices_with_indices
+            .iter()
+            .map(|v| world_from_portal.project_point3(v.vertex))
+            .collect_vec();
+
+        for index in 2..vertices.len() as u32 {
+            indices.extend_from_slice(&[0, index - 1, index]);
+        }
+
+        let portal_mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+        .with_inserted_indices(Indices::U32(indices));
+
         let mut texture = Image::new_uninit(
             size,
             TextureDimension::D2,
@@ -177,38 +305,16 @@ pub fn setup_portals(
             texture_handle: texture_handle.clone(),
         });
 
-        let (fov, near, aspect_ratio) = match player_camera_projection {
-            Projection::Perspective(perspective_projection) => (
-                perspective_projection.fov,
-                perspective_projection.near,
-                perspective_projection.aspect_ratio,
-            ),
-            _ => panic!("Expected player to have a perspective projection."),
-        };
-
-        let near_plane_half_height = near * (fov / 2.0).to_radians().tan();
-        let near_plane_half_width = near_plane_half_height * aspect_ratio;
-        let near_plane_diagonal_radius =
-            Vec3::new(near_plane_half_width, near_plane_half_height, near).length();
-
-        let portal_cuboid = Cuboid {
-            half_size: Vec3::new(
-                portal_surface.width,
-                portal_surface.height,
-                near_plane_diagonal_radius,
-            ),
-        };
-
         commands.entity(portal_ent).insert((
-            Mesh3d(meshes.add(portal_cuboid)),
+            Mesh3d(meshes.add(portal_mesh)),
             MeshMaterial3d(portal_material_handle),
             RenderLayers::layer(PORTAL_RENDER_LAYER_1),
-            Collider::cuboid(
-                portal_surface.width,
-                portal_surface.height,
-                near_plane_diagonal_radius,
-            ),
-            Sensor,
+            // Collider::cuboid(
+            //     portal_surface.width,
+            //     portal_surface.height,
+            //     near_plane_diagonal_radius,
+            // ),
+            //Sensor,
         ));
 
         commands.spawn((
@@ -223,7 +329,10 @@ pub fn setup_portals(
             Tonemapping::None,
             Camera3d::default(),
             Projection::custom(ObliquePerspectiveProjection {
-                perspective: PerspectiveProjection { fov, ..default() },
+                perspective: PerspectiveProjection {
+                    fov: fov.into(),
+                    ..default()
+                },
                 ..default()
             }),
             PortalCameraChildOf(portal_ent),
@@ -283,8 +392,8 @@ pub fn update_visibility(
 
 pub fn update_camera_positions(
     player_camera: Single<&GlobalTransform, With<PlayerWorldCameraMarker>>,
-    mut portal_cameras: Populated<(&mut Transform, &PortalCameraChildOf), Without<PortalSurface>>,
-    portals: Populated<(&Targeting, &Transform), (With<PortalSurface>, With<PortalCameraChild>)>,
+    mut portal_cameras: Populated<(&mut Transform, &PortalCameraChildOf), Without<PortalClass>>,
+    portals: Populated<(&Targeting, &Transform), (With<PortalClass>, With<PortalCameraChild>)>,
 ) -> Result {
     let player_camera_transform = player_camera.into_inner().compute_transform();
 

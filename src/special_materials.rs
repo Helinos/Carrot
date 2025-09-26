@@ -84,7 +84,7 @@ impl Material for PortalMaterial {
     fn specialize(
         _pipeline: &bevy::pbr::MaterialPipeline<Self>,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
-        _layout: &bevy_mesh::MeshVertexBufferLayoutRef,
+        _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = None;

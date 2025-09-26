@@ -19,6 +19,5 @@ pub struct DoorClosingMarker;
 #[derive(Clone, Default)]
 pub struct SlidingDoorClass {
     /// How far the door should travel when opened.
-    #[class(must_set)]
     distance: Option<f32>,
 }
