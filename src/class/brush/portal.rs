@@ -7,7 +7,8 @@ use bevy::{
     render::{
         Extract, Render, RenderApp, RenderSet,
         camera::{CameraProjection, extract_cameras},
-        mesh::{Indices, PrimitiveTopology},
+        mesh::{Extrudable, Indices, PrimitiveTopology},
+        primitives::Aabb,
         render_resource::{Extent3d, TextureDimension, TextureUsages},
         sync_world::RenderEntity,
         view::{ExtractedView, RenderLayers, ViewTarget},
@@ -82,6 +83,10 @@ pub struct PortalCameraChild(Entity);
 #[derive(Component)]
 pub struct OldTranslation(Vec3);
 
+/// Marks whether or not this entity attepted to be setup, not that it necessarily was.
+#[derive(Component)]
+pub struct PortalInitializedMarker;
+
 #[solid_class(
     base(Transform, Target, Targetable,),
     hooks(SpawnHooks::new()),
@@ -132,7 +137,7 @@ pub fn setup_portals(
             &Children,
         ),
         (
-            Without<PortalCameraChild>,
+            Without<PortalInitializedMarker>,
             With<PortalClass>,
             With<Children>,
         ),
@@ -148,9 +153,16 @@ pub fn setup_portals(
         ..default()
     };
 
-    for (portal_ent, targetable, portal_brushes, mut portal_transform, portal_children) in
-        portals.iter_mut()
+    'each_portal: for (
+        portal_ent,
+        targetable,
+        portal_brushes,
+        mut portal_transform,
+        portal_children,
+    ) in portals.iter_mut()
     {
+        commands.entity(portal_ent).insert(PortalInitializedMarker);
+
         let portal_name = format!(
             "{} with targetname `{}`",
             portal_ent,
@@ -162,25 +174,24 @@ pub fn setup_portals(
 
         let Some(portal_brushes) = portal_brushes else {
             error!("Portal {} has no brushes!", portal_name);
-            commands.entity(portal_ent).remove::<PortalClass>();
             continue;
         };
 
         let portal_brush: &BspBrush = match portal_brushes {
             Brushes::Bsp(handle) => {
-                let bsp_brushes_asset = bsp_brush_assets.get(handle).ok_or(anyhow!(
-                    "Unable to get bsp brushes for portal {}.",
-                    portal_name
-                ))?;
+                let Some(bsp_brushes_asset) = bsp_brush_assets.get(handle) else {
+                    error!("Unable to get bsp brushes for portal {}.", portal_name);
+                    continue 'each_portal;
+                };
 
                 let brushes = &bsp_brushes_asset.brushes;
 
                 if brushes.len() == 0 {
-                    return Err(anyhow!(
+                    error!(
                         "Portal {} has 0 brushes when it should have 1.",
                         portal_name,
-                    )
-                    .into());
+                    );
+                    continue 'each_portal;
                 } else if brushes.len() > 1 {
                     error!(
                         "Portal {} has {} brushes when it should only have 1. This is undefined behavior.",
@@ -192,11 +203,11 @@ pub fn setup_portals(
                 &brushes[0]
             }
             _ => {
-                return Err(anyhow!(
+                error!(
                     "Expected portal {}'s brushes to be in BSP format, but they weren't.",
                     portal_name
-                )
-                .into());
+                );
+                continue 'each_portal;
             }
         };
 
@@ -204,90 +215,133 @@ pub fn setup_portals(
         for child in portal_children {
             commands.entity(*child).despawn();
         }
-        let portal_center = portal_brush.center().as_vec3();
 
-        // Get a every point where the portal's plane intersects with the portal's brush.
-        let mut vertices_with_indices: Vec<VertexWithPlaneIndices> = Vec::new();
-        let mut smallest_index = usize::MAX;
+        let portal_center = portal_brush.center().as_vec3();
         let portal_plane = BrushPlane {
             normal: portal_transform.forward().as_dvec3(),
             distance: portal_transform
                 .forward()
                 .dot(portal_transform.translation - portal_center) as f64,
         };
-        // Do this after getting the portal plane or else the portal plane will be wrong.
-        portal_transform.translation = portal_center;
-        for combination in portal_brush.planes().enumerate().combinations(2) {
-            let (plane_1_index, plane_1) = combination[0];
-            let (plane_2_index, plane_2) = combination[1];
 
-            let Some(vertex) =
-                BrushPlane::calculate_intersection_point([&portal_plane, plane_1, plane_2])
-            else {
-                continue;
-            };
-
-            if !portal_brush.contains_point(vertex) {
-                info!("Filtered out point {}", vertex);
-                continue;
-            }
-
-            let element =
-                VertexWithPlaneIndices::new(plane_1_index, plane_2_index, vertex.as_vec3());
-
-            if !vertices_with_indices.contains(&element) {
-                vertices_with_indices.push(element);
-                smallest_index = smallest_index.min(plane_1_index.min(plane_2_index));
-            };
+        if !portal_brush.contains_plane(&portal_plane) {
+            error!(
+                "Portal {}'s plane is not contained within its brush.",
+                portal_name
+            );
+            continue 'each_portal;
         }
 
-        // PartialOrd sort based on which vertices share planes with one another.
-        vertices_with_indices.try_sort_by(|a, b| {
-            let mut common_index = None;
+        // Do this after getting the portal plane or else the portal plane will be wrong.
+        portal_transform.translation = portal_center;
 
-            for index in a.indices() {
-                if b.indices().contains(&index) {
-                    if common_index.is_some() {
-                        // Then both indices are the same
-                        return Some(false);
+        let world_from_portal = portal_transform.compute_matrix().inverse();
+        let portal_mesh;
+        let portal_collider;
+        if let Some((from, to)) = portal_brush.as_cuboid() {
+            let half_extents: Vec3A = 0.5 * (to - from).as_vec3a();
+
+            // From bevy_render primitives mod.rs;
+            let relative_radius = |normal: Vec3| -> f32 {
+                let normal: Vec3A = normal.into();
+                Vec3A::new(
+                    normal.dot(Mat3A::IDENTITY.x_axis),
+                    normal.dot(Mat3A::IDENTITY.y_axis),
+                    normal.dot(Mat3A::IDENTITY.z_axis),
+                )
+                .abs()
+                .dot(half_extents)
+            };
+
+            let width = relative_radius(*portal_transform.right());
+            let height = relative_radius(*portal_transform.up());
+
+            portal_mesh = meshes.add(Plane3d::new(Vec3::NEG_Z, Vec2::new(width, height)));
+            portal_collider = Collider::cuboid(width, height, 2.0);
+        } else {
+            // Get a every point where the portal's plane intersects with the portal's brush.
+            let mut vertices_with_indices: Vec<VertexWithPlaneIndices> = Vec::new();
+            let mut smallest_index = usize::MAX;
+            for combination in portal_brush.planes().enumerate().combinations(2) {
+                let (plane_1_index, plane_1) = combination[0];
+                let (plane_2_index, plane_2) = combination[1];
+
+                let Some(vertex) =
+                    BrushPlane::calculate_intersection_point([&portal_plane, plane_1, plane_2])
+                else {
+                    continue;
+                };
+
+                if !portal_brush.contains_point(vertex) {
+                    continue;
+                }
+
+                let element =
+                    VertexWithPlaneIndices::new(plane_1_index, plane_2_index, vertex.as_vec3());
+
+                if !vertices_with_indices.contains(&element) {
+                    vertices_with_indices.push(element);
+                    smallest_index = smallest_index.min(plane_1_index.min(plane_2_index));
+                };
+            }
+
+            // PartialOrd sort based on which vertices share planes with one another.
+            match vertices_with_indices.try_sort_by(|a, b| {
+                let mut common_index = None;
+
+                for index in a.indices() {
+                    if b.indices().contains(&index) {
+                        if common_index.is_some() {
+                            // Then both indices are the same
+                            return Some(false);
+                        }
+
+                        common_index = Some(index);
                     }
+                }
 
-                    common_index = Some(index);
+                let common_index = common_index?;
+                let all_indices = [a.indices(), b.indices()].concat();
+                let uncommon_indices = all_indices
+                    .iter()
+                    .filter(|i| **i != common_index)
+                    .collect_vec();
+
+                if common_index == smallest_index {
+                    return Some(uncommon_indices[0] > uncommon_indices[1]);
+                }
+
+                Some(uncommon_indices[0] < uncommon_indices[1])
+            }) {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("{}", e);
+                    continue 'each_portal;
                 }
             }
 
-            let common_index = common_index?;
-            let all_indices = [a.indices(), b.indices()].concat();
-            let uncommon_indices = all_indices
+            // ConvexPolygon uses a generic const in order to determine side count.
+            // TODO: Change in bevy 0.17.0 where this is no longer the case.
+            let mut indices = Vec::new();
+            let vertices = vertices_with_indices
                 .iter()
-                .filter(|i| **i != common_index)
+                .map(|v| world_from_portal.project_point3(v.vertex))
                 .collect_vec();
 
-            if common_index == smallest_index {
-                return Some(uncommon_indices[0] > uncommon_indices[1]);
+            for index in 2..vertices.len() as u32 {
+                indices.extend_from_slice(&[0, index - 1, index]);
             }
 
-            Some(uncommon_indices[0] < uncommon_indices[1])
-        })?;
-
-        let world_from_portal = portal_transform.compute_matrix().inverse();
-
-        let mut indices = Vec::new();
-        let vertices = vertices_with_indices
-            .iter()
-            .map(|v| world_from_portal.project_point3(v.vertex))
-            .collect_vec();
-
-        for index in 2..vertices.len() as u32 {
-            indices.extend_from_slice(&[0, index - 1, index]);
+            portal_mesh = meshes.add(
+                Mesh::new(
+                    PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::default(),
+                )
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+                .with_inserted_indices(Indices::U32(indices)),
+            );
+            portal_collider = todo!();
         }
-
-        let portal_mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
-        .with_inserted_indices(Indices::U32(indices));
 
         let mut texture = Image::new_uninit(
             size,
@@ -306,15 +360,11 @@ pub fn setup_portals(
         });
 
         commands.entity(portal_ent).insert((
-            Mesh3d(meshes.add(portal_mesh)),
+            Mesh3d(portal_mesh),
             MeshMaterial3d(portal_material_handle),
             RenderLayers::layer(PORTAL_RENDER_LAYER_1),
-            // Collider::cuboid(
-            //     portal_surface.width,
-            //     portal_surface.height,
-            //     near_plane_diagonal_radius,
-            // ),
-            //Sensor,
+            portal_collider,
+            Sensor,
         ));
 
         commands.spawn((

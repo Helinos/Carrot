@@ -1396,7 +1396,7 @@ dependencies = [
 [[package]]
 name = "bevy_trenchbroom"
 version = "0.9.3"
-source = "git+https://github.com/Noxmore/bevy_trenchbroom.git#3571dcd9a3e52e8e00c5bff051c8138da6e600ac"
+source = "git+https://github.com/Noxmore/bevy_trenchbroom.git#42f8190050a50456efebcbcf4f9088aa71348c89"
 dependencies = [
  "anyhow",
  "atomicow",
@@ -1428,7 +1428,7 @@ dependencies = [
 [[package]]
 name = "bevy_trenchbroom_macros"
 version = "0.9.3"
-source = "git+https://github.com/Noxmore/bevy_trenchbroom.git#3571dcd9a3e52e8e00c5bff051c8138da6e600ac"
+source = "git+https://github.com/Noxmore/bevy_trenchbroom.git#42f8190050a50456efebcbcf4f9088aa71348c89"
 dependencies = [
  "deluxe",
  "heck 0.5.0",

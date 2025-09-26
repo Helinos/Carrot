@@ -66,7 +66,7 @@ fn main() {
             CarrotClassPlugin,
             RemotePlugin::default(),
             RemoteHttpPlugin::default(),
-            //RapierDebugRenderPlugin::default(),
+            RapierDebugRenderPlugin::default(),
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, grab_cursor)
