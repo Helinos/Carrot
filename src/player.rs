@@ -1,3 +1,4 @@
+use core::f32;
 use std::f32::consts::FRAC_PI_2;
 
 use bevy::{
@@ -234,7 +235,7 @@ fn spawn_player(
             AutoExposure::default(),
             Projection::Perspective(PerspectiveProjection {
                 fov: fov.into_inner().into(),
-                near: 0.00001,
+                near: 0.05,
                 ..default()
             }),
             Transform::from_xyz(0.0, camera_settings.camera_height_offset, 0.0),

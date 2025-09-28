@@ -19,8 +19,18 @@ codegen-units = 1
 # Slows compile times, marginal improvements.
 lto = "thin"
 
+[features]
+default = ["debug", "wayland", "bevy/dynamic_linking"]
+debug = [
+    "bevy/bevy_remote",
+    "bevy/track_location",
+    "bevy_rapier3d/debug-render-3d",
+]
+x11 = ["bevy/x11"]
+wayland = ["bevy/wayland"]
+
 [dependencies]
-bevy = { version = "0.16.1", features = ["exr", "wayland", "bevy_remote"] }
+bevy = { version = "0.16.1", features = ["exr"] }
 nestify = "0.3.3"
 bevy-panic-handler = "5.0.0"
 bevy_trenchbroom = { git = "https://github.com/Noxmore/bevy_trenchbroom.git", default-features = true, features = [
@@ -29,10 +39,6 @@ bevy_trenchbroom = { git = "https://github.com/Noxmore/bevy_trenchbroom.git", de
 ] }
 bevy_framepace = "0.19.1"
 nil = "0.15.0"
-bevy_rapier3d = { version = "0.31.0", features = [
-    "simd-nightly",
-    "parallel",
-    "debug-render-3d",
-] }
+bevy_rapier3d = { version = "0.31.0", features = ["simd-nightly", "parallel"] }
 itertools = "0.14.0"
 try-partialord = "0.1.3"

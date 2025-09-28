@@ -1,8 +1,10 @@
 use bevy::{
     prelude::*,
-    remote::{RemotePlugin, http::RemoteHttpPlugin},
     window::{CursorGrabMode, PrimaryWindow},
 };
+
+#[cfg(feature = "debug")]
+use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
 use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::{
@@ -64,9 +66,15 @@ fn main() {
             ),
             FramepacePlugin,
             CarrotClassPlugin,
+            #[cfg(feature = "debug")]
             RemotePlugin::default(),
+            #[cfg(feature = "debug")]
             RemoteHttpPlugin::default(),
-            RapierDebugRenderPlugin::default(),
+            #[cfg(feature = "debug")]
+            RapierDebugRenderPlugin {
+                enabled: false,
+                ..default()
+            },
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, grab_cursor)

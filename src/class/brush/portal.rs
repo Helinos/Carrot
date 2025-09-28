@@ -7,11 +7,10 @@ use bevy::{
     render::{
         Extract, Render, RenderApp, RenderSet,
         camera::{CameraProjection, extract_cameras},
-        mesh::{Extrudable, Indices, PrimitiveTopology},
-        primitives::Aabb,
+        mesh::{Indices, PrimitiveTopology},
         render_resource::{Extent3d, TextureDimension, TextureUsages},
         sync_world::RenderEntity,
-        view::{ExtractedView, RenderLayers, ViewTarget},
+        view::{ExtractedView, RenderLayers, ViewTarget, VisibilitySystems},
     },
     window::PrimaryWindow,
 };
@@ -20,7 +19,6 @@ use bevy_rapier3d::{
     prelude::{Collider, ReadRapierContext, RigidBody, Sensor},
 };
 use bevy_trenchbroom::{
-    anyhow::anyhow,
     brush::{BrushPlane, ConvexHull},
     bsp::{BspBrush, BspBrushesAsset},
     geometry::Brushes,
@@ -33,7 +31,7 @@ use try_partialord::TrySort;
 use crate::{
     PORTAL_RENDER_LAYER_1,
     class::{TargetedBy, Targeting},
-    player::{FOV, PlayerVelocity, PlayerWorldCameraMarker},
+    player::{FOV, PlayerControllerMarker, PlayerVelocity, PlayerWorldCameraMarker},
     projections::ObliquePerspectiveProjection,
     special_materials::PortalMaterial,
 };
@@ -43,14 +41,20 @@ pub struct PortalPlugin;
 impl Plugin for PortalPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<PortalClass>()
-            .add_systems(PreUpdate, (update_visibility, update_portal_texture_size))
+            .insert_resource(PortalDepth::default())
+            .add_systems(PreUpdate, update_portal_texture_size)
             .add_systems(
                 PostUpdate,
                 (
                     setup_portals,
-                    portal_teleport
-                        .after(update_character_controls)
-                        .before(RapierTransformPropagateSet),
+                    update_portal_depth,
+                    (
+                        portal_teleport
+                            .after(update_character_controls)
+                            .before(RapierTransformPropagateSet),
+                        update_mesh_visibility.before(VisibilitySystems::VisibilityPropagate),
+                    )
+                        .chain(),
                     (update_camera_positions, update_camera_projections)
                         .after(RapierTransformPropagateSet)
                         .before(TransformSystem::TransformPropagate)
@@ -71,19 +75,33 @@ impl Plugin for PortalPlugin {
     }
 }
 
+/// The distance between all portal's centers and their meshes.
+#[derive(Resource, Default)]
+pub struct PortalDepth(f32);
+
+#[derive(Component)]
+pub enum PortalMeshSide {
+    Front,
+    Back,
+}
+
+/// Relationship pointing to the entity (portal) that this entity (camera) renders to.
 #[derive(Component)]
 #[component(immutable)]
 #[relationship(relationship_target = PortalCameraChild)]
 pub struct PortalCameraChildOf(pub Entity);
 
+/// Relationship pointing to the entity (camera) that render to this entity (portal).
 #[derive(Component)]
 #[relationship_target(relationship = PortalCameraChildOf, linked_spawn)]
 pub struct PortalCameraChild(Entity);
 
+/// The translation for the previous phyisics step for any entity with a rigidbody.
+/// Only updated when the entity is near a portal.
 #[derive(Component)]
 pub struct OldTranslation(Vec3);
 
-/// Marks whether or not this entity attepted to be setup, not that it necessarily was.
+/// Marks whether or not this entity (portal) was attepted to be setup, not necessarily that it was, as the setup can fail.
 #[derive(Component)]
 pub struct PortalInitializedMarker;
 
@@ -126,8 +144,9 @@ pub fn setup_portals(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<PortalMaterial>>,
-    fov: Res<FOV>,
     bsp_brush_assets: Res<Assets<BspBrushesAsset>>,
+    fov: Res<FOV>,
+    portal_depth: Res<PortalDepth>,
     mut portals: Populated<
         (
             Entity,
@@ -144,8 +163,8 @@ pub fn setup_portals(
     >,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) -> Result {
-    let window = windows.single()?;
     let fov = fov.into_inner();
+    let window = windows.single()?;
 
     let size = Extent3d {
         width: window.physical_width(),
@@ -236,7 +255,8 @@ pub fn setup_portals(
         portal_transform.translation = portal_center;
 
         let world_from_portal = portal_transform.compute_matrix().inverse();
-        let portal_mesh;
+        let portal_mesh_front;
+        let portal_mesh_back;
         let portal_collider;
         if let Some((from, to)) = portal_brush.as_cuboid() {
             let half_extents: Vec3A = 0.5 * (to - from).as_vec3a();
@@ -256,7 +276,8 @@ pub fn setup_portals(
             let width = relative_radius(*portal_transform.right());
             let height = relative_radius(*portal_transform.up());
 
-            portal_mesh = meshes.add(Plane3d::new(Vec3::NEG_Z, Vec2::new(width, height)));
+            portal_mesh_front = meshes.add(Plane3d::new(Vec3::NEG_Z, Vec2::new(width, height)));
+            portal_mesh_back = meshes.add(Plane3d::new(Vec3::Z, Vec2::new(width, height)));
             portal_collider = Collider::cuboid(width, height, 2.0);
         } else {
             // Get a every point where the portal's plane intersects with the portal's brush.
@@ -321,7 +342,7 @@ pub fn setup_portals(
             }
 
             // ConvexPolygon uses a generic const in order to determine side count.
-            // TODO: Change in bevy 0.17.0 where this is no longer the case.
+            // TODO: Change in bevy 0.17.0 where the above is no longer the case.
             let mut indices = Vec::new();
             let vertices = vertices_with_indices
                 .iter()
@@ -332,14 +353,17 @@ pub fn setup_portals(
                 indices.extend_from_slice(&[0, index - 1, index]);
             }
 
-            portal_mesh = meshes.add(
-                Mesh::new(
-                    PrimitiveTopology::TriangleList,
-                    RenderAssetUsages::default(),
-                )
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
-                .with_inserted_indices(Indices::U32(indices)),
-            );
+            let mut portal_mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::default(),
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+            .with_inserted_indices(Indices::U32(indices));
+
+            // No idea if this works <3
+            portal_mesh_front = meshes.add(portal_mesh.clone());
+            portal_mesh.invert_winding()?;
+            portal_mesh_back = meshes.add(portal_mesh);
             portal_collider = todo!();
         }
 
@@ -358,14 +382,28 @@ pub fn setup_portals(
         let portal_material_handle = materials.add(PortalMaterial {
             texture_handle: texture_handle.clone(),
         });
+        let material = MeshMaterial3d(portal_material_handle);
+        let render_layer = RenderLayers::layer(PORTAL_RENDER_LAYER_1);
 
-        commands.entity(portal_ent).insert((
-            Mesh3d(portal_mesh),
-            MeshMaterial3d(portal_material_handle),
-            RenderLayers::layer(PORTAL_RENDER_LAYER_1),
-            portal_collider,
-            Sensor,
-        ));
+        commands
+            .entity(portal_ent)
+            .insert((portal_collider, Sensor))
+            .with_children(|portal| {
+                portal.spawn((
+                    Mesh3d(portal_mesh_front),
+                    material.clone(),
+                    render_layer.clone(),
+                    PortalMeshSide::Front,
+                    Transform::from_xyz(0.0, 0.0, portal_depth.0),
+                ));
+                portal.spawn((
+                    Mesh3d(portal_mesh_back),
+                    material.clone(),
+                    render_layer.clone(),
+                    PortalMeshSide::Back,
+                    Transform::from_xyz(0.0, 0.0, -portal_depth.0),
+                ));
+            });
 
         commands.spawn((
             Camera {
@@ -421,19 +459,67 @@ pub fn update_portal_texture_size(
 }
 
 /// Disables the portal's camera if the portal's surface not visible.
-pub fn update_visibility(
-    mut portal_cameras: Populated<(&mut Camera, &PortalCameraChildOf)>,
-    mut portals: Populated<
-        &ViewVisibility,
-        (Without<PortalCameraChildOf>, With<PortalCameraChild>),
-    >,
+// Currently not working as the camera needs to be set as active 1 frame early. Which I don't know how to do.
+pub fn _update_camera_active(
+    mut portal_cameras: Populated<(&mut Camera, &PortalCameraChildOf), Changed<Transform>>,
+    portal_meshes: Populated<&ViewVisibility, (With<PortalMeshSide>, With<ChildOf>)>,
+    mut portals: Populated<&Children, (Without<PortalCameraChildOf>, With<PortalCameraChild>)>,
 ) -> Result {
     for (mut camera, camera_child_of) in portal_cameras.iter_mut() {
-        let view_visibility = portals.get_mut(camera_child_of.0)?;
+        let visibility = portals
+            .get_mut(camera_child_of.0)?
+            .iter()
+            .map(|portal_mesh_ent| {
+                let view_visibility = portal_meshes.get(portal_mesh_ent).unwrap();
+                view_visibility.get()
+            })
+            .fold(false, |a, b| a || b);
 
-        let visibility = view_visibility.get();
         if visibility != camera.is_active {
             camera.is_active = visibility;
+        }
+    }
+
+    Ok(())
+}
+
+/// Hide and unhide portal meshes based on which side of the portal the player is on.
+pub fn update_mesh_visibility(
+    player: Single<
+        &Transform,
+        (
+            Changed<Transform>,
+            With<PlayerControllerMarker>,
+            Without<PortalClass>,
+        ),
+    >,
+    portals: Populated<
+        (&Transform, &Children),
+        (With<PortalClass>, Without<PlayerControllerMarker>),
+    >,
+    mut portal_meshes: Populated<(&mut Visibility, &PortalMeshSide), With<ChildOf>>,
+) -> Result {
+    let player_transform = player.into_inner();
+
+    for (portal_transform, portal_children) in portals.iter() {
+        for portal_mesh_ent in portal_children {
+            let (mut mesh_visibility, mesh_side) = portal_meshes.get_mut(*portal_mesh_ent)?;
+
+            if portal_transform
+                .forward()
+                .dot(player_transform.translation - portal_transform.translation)
+                .is_sign_positive()
+            {
+                match mesh_side {
+                    PortalMeshSide::Front => *mesh_visibility = Visibility::Inherited,
+                    PortalMeshSide::Back => *mesh_visibility = Visibility::Hidden,
+                }
+            } else {
+                match mesh_side {
+                    PortalMeshSide::Front => *mesh_visibility = Visibility::Hidden,
+                    PortalMeshSide::Back => *mesh_visibility = Visibility::Inherited,
+                }
+            }
         }
     }
 
@@ -463,9 +549,16 @@ pub fn update_camera_positions(
     Ok(())
 }
 
+/// Modify the portal's camera's projections such that the projection's near clipping planes
+/// align with the portal's meshes. This fixes an issue where objects can lie between the portal's destination
+/// and its camera causing the object to be appear on the portal's mesh when it shouldn't.
 pub fn update_camera_projections(
-    mut portal_cameras: Populated<(&Transform, &PortalCameraChildOf, &mut Projection)>,
+    mut portal_cameras: Populated<
+        (&Transform, &PortalCameraChildOf, &mut Projection),
+        (Changed<Transform>, Without<PlayerWorldCameraMarker>),
+    >,
     portals: Populated<(&Targeting, &GlobalTransform), With<PortalCameraChild>>,
+    portal_depth: Res<PortalDepth>,
 ) -> Result {
     for (camera_transform, camera_child_of, projection) in portal_cameras.iter_mut() {
         let projection: &mut ObliquePerspectiveProjection = match projection.into_inner() {
@@ -491,14 +584,9 @@ pub fn update_camera_projections(
             .transform_vector3(dest_transform.forward().as_vec3())
             * sign;
 
-        // There is a very small seam between the portal and the near plane that is seemingly exagerated at higher viewing angles.
-        const NEAR_PLANE_OFFSET: f32 = 0.1;
-        // The projection breaks when the camera is very close to the portal surface.
-        const NEAR_CLIP_LIMIT: f32 = 0.1;
+        let v_plane_distance = -v_dest_translation.dot(v_dest_normal);
 
-        let v_plane_distance = -v_dest_translation.dot(v_dest_normal) + NEAR_PLANE_OFFSET;
-
-        if v_plane_distance.abs() > NEAR_CLIP_LIMIT {
+        if v_plane_distance.abs() > portal_depth.0 {
             projection.view_near_plane = v_dest_normal.extend(v_plane_distance);
         } else {
             projection.view_near_plane = Vec3::NEG_Z.extend(-projection.perspective.near);
@@ -589,4 +677,33 @@ pub fn portal_teleport(
     }
 
     Ok(())
+}
+
+/// Recalculate the distance need between a portal's center and its meshes in order to avoid clipping the near plane.
+fn update_portal_depth(
+    mut portal_depth: ResMut<PortalDepth>,
+    player_camera: Single<&Projection, (Changed<Projection>, With<PlayerWorldCameraMarker>)>,
+    mut portal_meshes: Query<(&mut Transform, &PortalMeshSide)>,
+) {
+    let player_camera_projection = player_camera.into_inner();
+
+    let (fov, near, aspect_ratio) = match player_camera_projection {
+        Projection::Perspective(perspective_projection) => (
+            perspective_projection.fov,
+            perspective_projection.near,
+            perspective_projection.aspect_ratio,
+        ),
+        _ => panic!("Expected player to have a perspective projection."),
+    };
+
+    let near_plane_half_height = near * (fov / 2.0).tan();
+    let near_plane_half_width = near_plane_half_height * aspect_ratio;
+    portal_depth.0 = Vec3::new(near_plane_half_width, near_plane_half_height, near).length();
+
+    for (mut transform, side) in portal_meshes.iter_mut() {
+        match side {
+            PortalMeshSide::Front => transform.translation = Vec3::new(0.0, 0.0, portal_depth.0),
+            PortalMeshSide::Back => transform.translation = Vec3::new(0.0, 0.0, -portal_depth.0),
+        }
+    }
 }

@@ -81,19 +81,19 @@ impl Material for PortalMaterial {
         AlphaMode::Opaque
     }
 
-    fn specialize(
-        _pipeline: &bevy::pbr::MaterialPipeline<Self>,
-        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
-        _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
-        _key: bevy::pbr::MaterialPipelineKey<Self>,
-    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = None;
+    // fn specialize(
+    //     _pipeline: &bevy::pbr::MaterialPipeline<Self>,
+    //     descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+    //     _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
+    //     _key: bevy::pbr::MaterialPipelineKey<Self>,
+    // ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+    //     descriptor.primitive.cull_mode = None;
 
-        // Prevent Z-fighting on the inside faces of a portal brush.
-        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
-            depth_stencil.bias.constant = 48;
-        }
+    //     // Prevent Z-fighting on the inside faces of a portal brush.
+    //     if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+    //         depth_stencil.bias.constant = 48;
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }
