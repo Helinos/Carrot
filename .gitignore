@@ -1,5 +1,5 @@
 /target
-/assets/textures
+/assets/textures/*.png
 /assets/wads
 /assets/palette.lmp
 /assets/maps/*.prt

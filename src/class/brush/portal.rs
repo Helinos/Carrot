@@ -605,7 +605,7 @@ pub fn extract_projections(
     }
 }
 
-// Recalculate the projection matrix in the extracted view because it's currently from a frame ago.
+/// Recalculate the projection matrix in the extracted view because it's currently from a frame ago.
 // This query is definitely not robust enough... Oh well.
 pub fn replace_extracted_projection(projections: Query<(&Projection, &mut ExtractedView)>) {
     for (projection, mut view) in projections {

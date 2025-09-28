@@ -30,7 +30,7 @@ fn setup_new_brushes(
 ) {
     // TODO: Not this
     let sky_material = MeshMaterial3d(materials.add(SkyMaterial {
-        texture: asset_server.load("textures/skybox/sky_cloudy018_hdr.exr"),
+        texture: asset_server.load("textures/skybox/jacob_robbins/sky_cloudy018_hdr.exr"),
         ..default()
     }));
 
@@ -80,20 +80,4 @@ impl Material for PortalMaterial {
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Opaque
     }
-
-    // fn specialize(
-    //     _pipeline: &bevy::pbr::MaterialPipeline<Self>,
-    //     descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
-    //     _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
-    //     _key: bevy::pbr::MaterialPipelineKey<Self>,
-    // ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-    //     descriptor.primitive.cull_mode = None;
-
-    //     // Prevent Z-fighting on the inside faces of a portal brush.
-    //     if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
-    //         depth_stencil.bias.constant = 48;
-    //     }
-
-    //     Ok(())
-    // }
 }

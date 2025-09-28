@@ -235,7 +235,7 @@ fn spawn_player(
             AutoExposure::default(),
             Projection::Perspective(PerspectiveProjection {
                 fov: fov.into_inner().into(),
-                near: 0.05,
+                near: 0.01,
                 ..default()
             }),
             Transform::from_xyz(0.0, camera_settings.camera_height_offset, 0.0),
