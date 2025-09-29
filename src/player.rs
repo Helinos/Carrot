@@ -1,15 +1,13 @@
 use core::f32;
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::{
-    core_pipeline::auto_exposure::AutoExposure, input::mouse::AccumulatedMouseMotion, prelude::*,
-    render::view::RenderLayers,
-};
+use bevy::{core_pipeline::auto_exposure::AutoExposure, prelude::*, render::view::RenderLayers};
 use bevy_rapier3d::prelude::*;
 use bevy_trenchbroom::class::builtin::InfoPlayerStart;
+use leafwing_input_manager::{plugin::InputManagerSystem, prelude::ActionState};
 use nestify::nest;
 
-use crate::{DEFAULT_RENDER_LAYER, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2};
+use crate::{DEFAULT_RENDER_LAYER, InputAction, PORTAL_RENDER_LAYER_1, PORTAL_RENDER_LAYER_2};
 
 pub struct PlayerPlugin;
 
@@ -17,7 +15,10 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<MovementAction>()
             .init_resource::<FOV>()
-            .add_systems(PreUpdate, (mouse_input, keyboard_input))
+            .add_systems(
+                PreUpdate,
+                (look_input, movement_input).after(InputManagerSystem::Update),
+            )
             .add_systems(Update, (headbob_effect, look, movement.after(look)))
             .add_systems(
                 PostUpdate,
@@ -161,7 +162,7 @@ pub struct PlayerVelocity(pub Vec3);
     CameraSettings {
         allow_movement: false,
         mouse_sensitivity: CameraSensitivity::Linear(0.0015),
-        controller_sensitivity: CameraSensitivity::Linear(0.005),
+        controller_sensitivity: CameraSensitivity::Linear(0.01),
         camera_height_offset: 0.79,
     },
     MovementSettings {
@@ -249,30 +250,23 @@ fn spawn_player(
     Ok(())
 }
 
-pub fn keyboard_input(
+pub fn movement_input(
     player_settings: Single<
         (Option<&JumpSettings>, &MovementSettings),
         With<PlayerControllerMarker>,
     >,
     mut movement_event_writer: EventWriter<MovementAction>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
+    action_state: Single<&ActionState<InputAction>>,
 ) {
     let (jump_settings, movement_settings) = player_settings.into_inner();
 
-    let forward = keyboard_input.pressed(KeyCode::KeyW);
-    let backward = keyboard_input.pressed(KeyCode::KeyS);
-    let left = keyboard_input.pressed(KeyCode::KeyA);
-    let right = keyboard_input.pressed(KeyCode::KeyD);
-
-    let lateral = right as i8 - left as i8;
-    let longitudinal = backward as i8 - forward as i8;
-    let input_direction = Vec2::new(lateral as f32, longitudinal as f32).normalize_or_zero();
+    let input_direction = action_state.clamped_axis_pair(&InputAction::Move);
 
     if input_direction != Vec2::ZERO {
         movement_event_writer.write(MovementAction::Move {
             input_direction,
             movement_speed: if let Some(sprinting_speed) = movement_settings.sprinting_speed
-                && keyboard_input.pressed(KeyCode::ShiftLeft)
+                && action_state.pressed(&InputAction::Sprint)
             {
                 sprinting_speed
             } else {
@@ -281,24 +275,35 @@ pub fn keyboard_input(
         });
     }
 
-    if let Some(jump_settings) = jump_settings {
-        if keyboard_input.just_pressed(KeyCode::Space)
-            || (jump_settings.auto_bhop && keyboard_input.pressed(KeyCode::Space))
-        {
-            movement_event_writer.write(MovementAction::Jump);
-        }
+    let Some(jump_settings) = jump_settings else {
+        return;
+    };
+
+    let jump_just_pressed = action_state.just_pressed(&InputAction::Jump);
+    let jump_held = action_state.pressed(&InputAction::Jump);
+
+    if jump_just_pressed || (jump_held && jump_settings.auto_bhop) {
+        movement_event_writer.write(MovementAction::Jump);
     }
 }
 
-pub fn mouse_input(
+pub fn look_input(
     camera_settings: Single<&CameraSettings>,
-    accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
     mut movement_event_writer: EventWriter<MovementAction>,
+    action_state: Single<&ActionState<InputAction>>,
 ) {
-    let delta = accumulated_mouse_motion.delta;
-    if delta != Vec2::ZERO && camera_settings.allow_movement {
-        let sensitivity: Vec2 = camera_settings.mouse_sensitivity.into();
-        let delta = -delta * sensitivity;
+    let delta_mouse = action_state.axis_pair(&InputAction::LookMouse);
+    let delta_controller = action_state.axis_pair(&InputAction::LookController);
+    if camera_settings.allow_movement {
+        let delta: Vec2 = if delta_mouse != Vec2::ZERO {
+            let sensitivity: Vec2 = camera_settings.mouse_sensitivity.into();
+            -delta_mouse * sensitivity
+        } else if delta_controller != Vec2::ZERO {
+            let sensitivity: Vec2 = camera_settings.controller_sensitivity.into();
+            Vec2::new(-delta_controller.x, delta_controller.y) * sensitivity
+        } else {
+            return;
+        };
 
         movement_event_writer.write(MovementAction::Look { delta });
     }
@@ -371,9 +376,11 @@ pub fn movement(
                     input_direction,
                     movement_speed,
                 } => {
-                    let wish_direction = transform
-                        .rotation
-                        .mul_vec3(input_direction.extend(0.0).xzy());
+                    let wish_direction = transform.rotation.mul_vec3(Vec3::new(
+                        input_direction.x,
+                        0.0,
+                        -input_direction.y,
+                    ));
                     let current_speed_in_wish_direction = velocity.dot(wish_direction);
                     let add_speed_till_cap = movement_speed - current_speed_in_wish_direction;
                     if add_speed_till_cap > 0.0 {
@@ -415,9 +422,11 @@ pub fn movement(
                     input_direction,
                     movement_speed: _,
                 } => {
-                    let wish_direction = transform
-                        .rotation
-                        .mul_vec3(input_direction.extend(0.0).xzy());
+                    let wish_direction = transform.rotation.mul_vec3(Vec3::new(
+                        input_direction.x,
+                        0.0,
+                        -input_direction.y,
+                    ));
                     let current_speed_in_wish_direction = velocity.dot(wish_direction);
                     let capped_speed = (movement_settings.air_move_speed * wish_direction)
                         .length()

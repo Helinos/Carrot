@@ -12,6 +12,7 @@ use bevy_trenchbroom::{
     config::TrenchBroomConfig,
     prelude::{ComputeLightmapSettings, SpawnHooks},
 };
+use leafwing_input_manager::{buttonlike, prelude::*};
 use nil::ShortToString;
 
 use crate::{
@@ -66,6 +67,7 @@ fn main() {
             ),
             FramepacePlugin,
             CarrotClassPlugin,
+            InputManagerPlugin::<InputAction>::default(),
             #[cfg(feature = "debug")]
             RemotePlugin::default(),
             #[cfg(feature = "debug")]
@@ -81,6 +83,22 @@ fn main() {
         .run();
 }
 
+#[derive(Actionlike, PartialEq, Eq, Hash, Clone, Copy, Debug, Reflect)]
+enum InputAction {
+    #[actionlike(DualAxis)]
+    Move,
+    #[actionlike(DualAxis)]
+    LookMouse,
+    #[actionlike(DualAxis)]
+    LookController,
+    Jump,
+    Sprint,
+    Crouch,
+    Pause,
+    UnlockMouse,
+    Interact,
+}
+
 fn setup(
     mut commands: Commands,
     mut framepace_setting: ResMut<FramepaceSettings>,
@@ -89,6 +107,42 @@ fn setup(
     framepace_setting.limiter = Limiter::Auto;
 
     commands.spawn(SceneRoot(asset_server.load("maps/test.bsp#Scene")));
+
+    use InputAction::*;
+
+    let mut input_map: InputMap<InputAction> = InputMap::default();
+
+    input_map.insert_dual_axis(Move, VirtualDPad::wasd().with_circle_bounds(1.0));
+    input_map.insert_dual_axis(
+        Move,
+        GamepadStick::LEFT
+            .with_circle_bounds(1.0)
+            .with_circle_deadzone(0.1),
+    );
+
+    input_map.insert_dual_axis(LookMouse, MouseMove::default());
+    input_map.insert_dual_axis(
+        LookController,
+        GamepadStick::RIGHT
+            .with_circle_bounds(1.0)
+            .with_circle_deadzone(0.1),
+    );
+
+    input_map.insert(Jump, KeyCode::Space);
+    input_map.insert(Jump, GamepadButton::South);
+
+    input_map.insert(Sprint, KeyCode::ShiftLeft);
+    input_map.insert(Sprint, GamepadButton::West);
+
+    input_map.insert(Pause, KeyCode::Escape);
+    input_map.insert(Pause, GamepadButton::Start);
+
+    input_map.insert(UnlockMouse, KeyCode::KeyF);
+
+    input_map.insert(Interact, MouseButton::Left);
+    input_map.insert(Interact, GamepadButton::East);
+
+    commands.spawn(input_map);
 
     commands.spawn((
         PlayerControllerMarker,
@@ -100,19 +154,20 @@ fn setup(
 fn grab_cursor(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut camera_settings: Single<&mut CameraSettings>,
+    action_state: Single<&ActionState<InputAction>>,
     button: Res<ButtonInput<MouseButton>>,
-    key: Res<ButtonInput<KeyCode>>,
 ) -> Result {
     let mut window = windows.single_mut()?;
 
-    if key.just_pressed(KeyCode::KeyF) && window.cursor_options.grab_mode == CursorGrabMode::Locked
+    if action_state.just_pressed(&InputAction::UnlockMouse)
+        && window.cursor_options.grab_mode == CursorGrabMode::Locked
     {
         window.cursor_options.grab_mode = CursorGrabMode::Confined;
         window.cursor_options.visible = true;
         camera_settings.allow_movement = false;
     }
 
-    if key.just_released(KeyCode::KeyF)
+    if action_state.just_released(&InputAction::UnlockMouse)
         && window.cursor_options.grab_mode == CursorGrabMode::Confined
     {
         window.cursor_options.grab_mode = CursorGrabMode::Locked;
@@ -128,7 +183,7 @@ fn grab_cursor(
         camera_settings.allow_movement = true;
     }
 
-    if key.just_pressed(KeyCode::Escape)
+    if action_state.just_pressed(&InputAction::Pause)
         && window.cursor_options.grab_mode == CursorGrabMode::Locked
     {
         window.cursor_options.grab_mode = CursorGrabMode::None;

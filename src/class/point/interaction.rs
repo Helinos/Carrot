@@ -1,8 +1,13 @@
 use bevy::{prelude::*, render::camera::ViewportConversionError};
 use bevy_trenchbroom::prelude::*;
+use leafwing_input_manager::prelude::*;
 use nil::prelude::SmartDefault;
 
-use crate::player::{PlayerControllerMarker, PlayerWorldCameraMarker};
+use crate::{
+    InputAction,
+    class::Targeting,
+    player::{PlayerControllerMarker, PlayerWorldCameraMarker},
+};
 
 pub struct CarrotInteractPlugin;
 
@@ -12,8 +17,8 @@ impl Plugin for CarrotInteractPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<InteractPointClass>()
             .register_type::<QuickInteractPointClass>()
-            .add_systems(Update, update_quick_interaction_hints)
-            .add_systems(PostUpdate, spawn_despawn_quick_interact_hints);
+            .add_systems(Update, update_quick_interact_ui_position)
+            .add_systems(PostUpdate, spawn_despawn_quick_interact_ui);
     }
 }
 
@@ -41,7 +46,7 @@ pub struct QuickInteractPointClass {
     range: f32,
 }
 
-pub fn spawn_despawn_quick_interact_hints(
+pub fn spawn_despawn_quick_interact_ui(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     quick_interact_points: Populated<(
@@ -82,7 +87,7 @@ pub fn spawn_despawn_quick_interact_hints(
     }
 }
 
-pub fn update_quick_interaction_hints(
+pub fn update_quick_interact_ui_position(
     mut ui_elements: Populated<(&QuickInteractUIElementChildOf, &mut Node)>,
     player_camera: Single<(&Camera, &GlobalTransform), With<PlayerWorldCameraMarker>>,
     quick_interact_points: Populated<
@@ -159,4 +164,16 @@ pub fn update_quick_interaction_hints(
     }
 
     Ok(())
+}
+
+pub fn interact(
+    action_state: Single<&ActionState<InputAction>>,
+    quick_interact_points: Populated<
+        &Targeting,
+        (
+            With<QuickInteractUIElementChild>, // This counts as a range check
+            With<QuickInteractPointClass>,
+        ),
+    >,
+) {
 }
