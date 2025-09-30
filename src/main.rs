@@ -12,7 +12,7 @@ use bevy_trenchbroom::{
     config::TrenchBroomConfig,
     prelude::{ComputeLightmapSettings, SpawnHooks},
 };
-use leafwing_input_manager::{buttonlike, prelude::*};
+use leafwing_input_manager::prelude::*;
 use nil::ShortToString;
 
 use crate::{

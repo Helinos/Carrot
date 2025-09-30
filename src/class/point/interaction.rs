@@ -1,11 +1,12 @@
 use bevy::{prelude::*, render::camera::ViewportConversionError};
 use bevy_trenchbroom::prelude::*;
+use itertools::Itertools;
 use leafwing_input_manager::prelude::*;
 use nil::prelude::SmartDefault;
 
 use crate::{
     InputAction,
-    class::Targeting,
+    class::{Busy, TargetEvent, Targeting},
     player::{PlayerControllerMarker, PlayerWorldCameraMarker},
 };
 
@@ -17,7 +18,7 @@ impl Plugin for CarrotInteractPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<InteractPointClass>()
             .register_type::<QuickInteractPointClass>()
-            .add_systems(Update, update_quick_interact_ui_position)
+            .add_systems(Update, (update_quick_interact_ui_position, interact))
             .add_systems(PostUpdate, spawn_despawn_quick_interact_ui);
     }
 }
@@ -167,6 +168,7 @@ pub fn update_quick_interact_ui_position(
 }
 
 pub fn interact(
+    mut commands: Commands,
     action_state: Single<&ActionState<InputAction>>,
     quick_interact_points: Populated<
         &Targeting,
@@ -175,5 +177,14 @@ pub fn interact(
             With<QuickInteractPointClass>,
         ),
     >,
+    targetables: Populated<Entity, (With<Targetable>, Without<Busy>)>,
 ) {
+    if action_state.just_pressed(&InputAction::Interact) {
+        let targets = quick_interact_points
+            .iter()
+            .filter_map(|targeting| targetables.get(targeting.0).ok())
+            .collect_vec();
+
+        commands.trigger_targets(TargetEvent, targets);
+    }
 }

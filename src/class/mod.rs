@@ -11,6 +11,7 @@ pub struct CarrotClassPlugin;
 impl Plugin for CarrotClassPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((BrushPlugin, PointPlugin))
+            .add_event::<TargetEvent>()
             .add_systems(PostUpdate, setup_target_relationships);
     }
 }
@@ -22,6 +23,12 @@ pub struct Targeting(pub Entity);
 #[derive(Component)]
 #[relationship_target(relationship = Targeting)]
 pub struct TargetedBy(Vec<Entity>);
+
+#[derive(Event)]
+pub struct TargetEvent;
+
+#[derive(Component)]
+pub struct Busy;
 
 pub fn setup_target_relationships(
     mut commands: Commands,
